@@ -1,0 +1,6 @@
+{
+  "name": "CEA Micaela Bastidas – Gestión Institucional",
+  "description": "Sistema de gestión institucional PWA para el CEA Micaela Bastidas: asistencia docente y estudiantil, seguimiento, alertas y documentos.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
