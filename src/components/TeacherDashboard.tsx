@@ -15,12 +15,19 @@ import {
   Plus,
   Trash2,
   Check,
-  PenTool
+  PenTool,
+  Camera,
+  ShieldCheck
 } from 'lucide-react';
-import { Perfil, AsistenciaDocente, FilaActividadPedagogica } from '../types';
+import { Perfil, AsistenciaDocente, FilaActividadPedagogica, ControlDocumental } from '../types';
 import { supabase } from '../lib/supabase';
 import { saveOfflineDocenteAsistencia } from '../lib/db';
 import { MOCK_ASISTENCIAS_DOCENTES } from '../lib/mockData';
+import { getCurrentGPSPosition } from '../lib/geo';
+import { ClockInVerificationModal } from './ClockInVerificationModal';
+import { ControlDocumentalCard } from './ControlDocumentalCard';
+import { EditControlDocumentalModal } from './EditControlDocumentalModal';
+import { getControlDocumentalForDocente } from '../lib/controlDocumental';
 
 interface TeacherDashboardProps {
   user: Perfil;
@@ -65,9 +72,12 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
   onRefreshSync
 }) => {
   const [todayAttendance, setTodayAttendance] = useState<AsistenciaDocente | null>(null);
+  const [controlDoc, setControlDoc] = useState<ControlDocumental | undefined>(undefined);
+  const [isEditControlModalOpen, setIsEditControlModalOpen] = useState<boolean>(false);
   const [loadingAction, setLoadingAction] = useState<boolean>(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error' | 'warning'; text: string } | null>(null);
   const [showShiftSummaryModal, setShowShiftSummaryModal] = useState<boolean>(false);
+  const [showClockInVerificationModal, setShowClockInVerificationModal] = useState<boolean>(false);
 
   // Form modal state for Control Diario
   const [showControlDiarioModal, setShowControlDiarioModal] = useState<boolean>(false);
@@ -101,9 +111,14 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
     day: 'numeric'
   });
 
-  // Load existing attendance record for today
+  // Load existing attendance record and control documental
   useEffect(() => {
-    async function loadTodayRecord() {
+    async function loadInitialData() {
+      // 1. Control Documental
+      const docControl = await getControlDocumentalForDocente(user.id);
+      setControlDoc(docControl);
+
+      // 2. Attendance
       let foundRec: AsistenciaDocente | null = null;
       if (supabase && isOnline) {
         const { data } = await supabase
@@ -134,92 +149,35 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
         if (foundRec.firma_salida !== undefined) setFirmaSalida(foundRec.firma_salida);
       }
     }
-    loadTodayRecord();
+    loadInitialData();
   }, [user.id, todayStr, isOnline]);
 
-  // Handle Ingreso (Clock In)
-  const handleRegistrarIngreso = async () => {
+  // Open Clock In Modal
+  const handleRegistrarIngreso = () => {
     if (todayAttendance?.hora_ingreso_oficial) {
       setMessage({ type: 'warning', text: 'Ya registraste tu ingreso para la jornada de hoy.' });
       return;
     }
-
-    setLoadingAction(true);
     setMessage(null);
-
-    const syncKey = `ingreso-${user.id}-${todayStr}-${Date.now()}`;
-    const localIso = new Date().toISOString();
-
-    try {
-      if (isOnline && supabase) {
-        const { data, error } = await supabase.rpc('registrar_ingreso', {
-          p_docente_id: user.id,
-          p_sync_key: syncKey,
-          p_hora_local: localIso,
-          p_es_offline: false,
-          p_observacion: 'Ingreso registrado en línea'
-        });
-
-        if (error) {
-          setMessage({ type: 'error', text: error.message || 'Error al registrar ingreso' });
-        } else if (data) {
-          const newRec: AsistenciaDocente = {
-            ...(data as AsistenciaDocente),
-            firma_ingreso: true,
-            actividades_multigrado: multigradoRows
-          };
-          setTodayAttendance(newRec);
-          setFirmaEntrada(true);
-          setMessage({
-            type: 'success',
-            text: `¡Ingreso verificado a las ${new Date().toLocaleTimeString('es-BO')}!`
-          });
-        }
-      } else {
-        // OFFLINE MODE
-        await saveOfflineDocenteAsistencia({
-          sync_key: syncKey,
-          docente_id: user.id,
-          tipo: 'ingreso',
-          hora_local: localIso,
-          observacion: 'Registrado sin conexión en el dispositivo',
-          timestamp: Date.now()
-        });
-
-        const offlineRecord: AsistenciaDocente = {
-          id: syncKey,
-          docente_id: user.id,
-          fecha_laboral: todayStr,
-          hora_ingreso_oficial: localIso,
-          hora_ingreso_local: localIso,
-          firma_ingreso: true,
-          firma_salida: false,
-          minutos_atraso: 0,
-          minutos_salida_anticipada: 0,
-          horas_trabajadas: 0,
-          estado: 'pendiente_verificacion',
-          origen_registro: 'sin_conexion',
-          sync_key: syncKey,
-          observacion: 'Registrado sin conexión. Pendiente de verificación.',
-          actividades_multigrado: multigradoRows
-        };
-
-        setTodayAttendance(offlineRecord);
-        setFirmaEntrada(true);
-        onRefreshSync();
-        setMessage({
-          type: 'warning',
-          text: 'Registro guardado sin conexión localmente.'
-        });
-      }
-    } catch (err: any) {
-      setMessage({ type: 'error', text: err.message || 'Error al procesar el registro.' });
-    } finally {
-      setLoadingAction(false);
-    }
+    setShowClockInVerificationModal(true);
   };
 
-  // Handle Salida (Clock Out)
+  const handleClockInSuccess = (newRecord: AsistenciaDocente) => {
+    setTodayAttendance(newRecord);
+    setFirmaEntrada(true);
+    setShowClockInVerificationModal(false);
+    onRefreshSync();
+
+    const isPending = newRecord.estado_excepcion === 'pendiente_revision' || newRecord.estado === 'pendiente_verificacion';
+    setMessage({
+      type: isPending ? 'warning' : 'success',
+      text: isPending
+        ? '⚠️ Ingreso registrado con excepción. Pendiente de revisión por Dirección.'
+        : `¡Ingreso verificado exitosamente con GPS y Selfie a las ${new Date().toLocaleTimeString('es-BO')}!`
+    });
+  };
+
+  // Handle Salida (Clock Out) with GPS verification
   const handleRegistrarSalida = async () => {
     if (!todayAttendance?.hora_ingreso_oficial) {
       setMessage({ type: 'warning', text: 'Debe registrar ingreso antes de registrar la salida.' });
@@ -237,15 +195,33 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
     const syncKey = `salida-${user.id}-${todayStr}-${Date.now()}`;
     const localIso = new Date().toISOString();
 
+    // Obtain current GPS position for exit
+    const gpsLocation = await getCurrentGPSPosition();
+
     try {
       if (isOnline && supabase) {
-        const { data, error } = await supabase.rpc('registrar_salida', {
+        let { data, error } = await supabase.rpc('registrar_salida_gps', {
           p_docente_id: user.id,
           p_sync_key: syncKey,
           p_hora_local: localIso,
           p_es_offline: false,
-          p_observacion: 'Salida registrada en línea'
+          p_latitud: gpsLocation.latitud || null,
+          p_longitud: gpsLocation.longitud || null,
+          p_precision: gpsLocation.precision || null,
+          p_observacion: 'Salida registrada con verificación GPS'
         });
+
+        if (error && error.message?.includes('function')) {
+          const fallback = await supabase.rpc('registrar_salida', {
+            p_docente_id: user.id,
+            p_sync_key: syncKey,
+            p_hora_local: localIso,
+            p_es_offline: false,
+            p_observacion: 'Salida registrada en línea'
+          });
+          data = fallback.data;
+          error = fallback.error;
+        }
 
         if (error) {
           setMessage({ type: 'error', text: error.message || 'Error al registrar salida' });
@@ -253,6 +229,9 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
           const updatedRec: AsistenciaDocente = {
             ...(data as AsistenciaDocente),
             firma_salida: true,
+            latitud_salida: gpsLocation.latitud,
+            longitud_salida: gpsLocation.longitud,
+            precision_gps_salida: gpsLocation.precision,
             actividades_multigrado: multigradoRows
           };
           setTodayAttendance(updatedRec);
@@ -260,33 +239,34 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
           setShowShiftSummaryModal(true);
         }
       } else {
+        // OFFLINE MODE
         await saveOfflineDocenteAsistencia({
           sync_key: syncKey,
           docente_id: user.id,
           tipo: 'salida',
           hora_local: localIso,
+          latitud: gpsLocation.latitud,
+          longitud: gpsLocation.longitud,
+          precision_gps: gpsLocation.precision,
           observacion: 'Salida registrada sin conexión',
           timestamp: Date.now()
         });
 
-        const entryTime = new Date(todayAttendance.hora_ingreso_oficial).getTime();
-        const exitTime = new Date(localIso).getTime();
-        const hrsWorked = Number(((exitTime - entryTime) / (1000 * 3600)).toFixed(2));
-
-        const updatedRecord: AsistenciaDocente = {
+        const updatedRec: AsistenciaDocente = {
           ...todayAttendance,
           hora_salida_oficial: localIso,
           hora_salida_local: localIso,
           firma_salida: true,
-          horas_trabajadas: hrsWorked,
-          observacion: 'Salida registrada sin conexión localmente.',
+          latitud_salida: gpsLocation.latitud,
+          longitud_salida: gpsLocation.longitud,
+          precision_gps_salida: gpsLocation.precision,
           actividades_multigrado: multigradoRows
         };
 
-        setTodayAttendance(updatedRecord);
+        setTodayAttendance(updatedRec);
         setFirmaSalida(true);
-        onRefreshSync();
         setShowShiftSummaryModal(true);
+        onRefreshSync();
       }
     } catch (err: any) {
       setMessage({ type: 'error', text: err.message || 'Error al procesar la salida.' });
@@ -413,6 +393,13 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
           </div>
         )}
       </div>
+
+      {/* Control Documental Recuadro */}
+      <ControlDocumentalCard
+        control={controlDoc}
+        currentUser={user}
+        onOpenEdit={() => setIsEditControlModalOpen(true)}
+      />
 
       {/* Main Clock In / Clock Out & Control Diario Card */}
       <div className="bg-white rounded-3xl p-5 shadow-sm border border-slate-200 space-y-4">
@@ -938,6 +925,27 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
             )}
           </div>
         </div>
+      )}
+
+      {/* Clock-In GPS and Selfie Verification Modal */}
+      {showClockInVerificationModal && (
+        <ClockInVerificationModal
+          user={user}
+          isOnline={isOnline}
+          onClose={() => setShowClockInVerificationModal(false)}
+          onSuccess={handleClockInSuccess}
+        />
+      )}
+
+      {/* Control Documental Edit Modal */}
+      {isEditControlModalOpen && (
+        <EditControlDocumentalModal
+          docente={user}
+          currentControl={controlDoc}
+          currentUser={user}
+          onClose={() => setIsEditControlModalOpen(false)}
+          onSaveSuccess={(updated) => setControlDoc(updated)}
+        />
       )}
     </div>
   );

@@ -1,5 +1,21 @@
 export type UserRole = 'superadmin' | 'docente';
 
+export type FormatoPlanModular = 'Digital' | 'Impreso' | 'Ambos';
+export type EstadoControlDocumental = 'presentado' | 'pendiente';
+
+export interface ControlDocumental {
+  id?: string;
+  docente_id: string;
+  tiene_plan_modular: boolean;
+  formato_plan_modular: FormatoPlanModular;
+  tiene_planificacion_curricular: boolean;
+  fecha_revision?: string;
+  observacion?: string;
+  estado?: EstadoControlDocumental;
+  updated_at?: string;
+  updated_by?: string;
+}
+
 export interface Perfil {
   id: string;
   nombre_completo: string;
@@ -17,6 +33,7 @@ export interface Perfil {
   activo: boolean;
   puede_publicar: boolean;
   fecha_incorporacion?: string;
+  control_documental?: ControlDocumental;
   created_at?: string;
   updated_at?: string;
   // Joined fields
@@ -38,6 +55,9 @@ export interface Sede {
   id: string;
   nombre: string;
   direccion?: string;
+  latitud?: number;
+  longitud?: number;
+  radio_m?: number; // Radio permitido en metros (default 150)
   activo: boolean;
   created_at?: string;
 }
@@ -140,6 +160,9 @@ export type EstadoAsistenciaDocente =
   | 'licencia'
   | 'pendiente_verificacion';
 
+export type EstadoGPS = 'dentro_rango' | 'fuera_rango' | 'gps_impreciso' | 'sin_gps';
+export type EstadoExcepcion = 'ninguna' | 'pendiente_revision' | 'aprobada' | 'rechazada';
+
 export interface FilaActividadPedagogica {
   id: string;
   area_nivel: 'EPA' | 'ESA' | 'ETA' | string;
@@ -167,6 +190,24 @@ export interface AsistenciaDocente {
   sync_key: string;
   observacion?: string;
   actividades_multigrado?: FilaActividadPedagogica[];
+
+  // GPS y Selfie - Entrada
+  latitud_ingreso?: number;
+  longitud_ingreso?: number;
+  precision_gps_ingreso?: number;
+  distancia_m_ingreso?: number;
+  estado_gps_ingreso?: EstadoGPS;
+  selfie_url?: string; // Path en bucket selfies-asistencia o URL firmada / local blob
+  observacion_excepcion?: string;
+  estado_excepcion?: EstadoExcepcion;
+  validado_por?: string;
+  fecha_validacion?: string;
+
+  // GPS - Salida
+  latitud_salida?: number;
+  longitud_salida?: number;
+  precision_gps_salida?: number;
+
   created_at?: string;
   // Joined
   docente_nombre?: string;

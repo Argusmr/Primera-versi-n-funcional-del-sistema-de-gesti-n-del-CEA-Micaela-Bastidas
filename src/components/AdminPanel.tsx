@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { Perfil, Sede, Horario, Programa, Etapa, NivelEducativo, DatosInstitucionales } from '../types';
 import { INITIAL_SEDES, INITIAL_HORARIOS } from '../lib/mockData';
+import { supabase } from '../lib/supabase';
 import { getLocalDatosInstitucionales, saveDatosInstitucionales } from '../lib/institutional';
 import {
   getLocalProgramas,
@@ -92,6 +93,23 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     etapa_nombre: '',
     programa_codigo: 'EPA',
     descripcion: ''
+  });
+
+  // Modal / Form state for Sedes (GPS Config)
+  const [editingSede, setEditingSede] = useState<Sede | null>(null);
+  const [isSedeModalOpen, setIsSedeModalOpen] = useState(false);
+  const [sedeForm, setSedeForm] = useState<{
+    nombre: string;
+    direccion: string;
+    latitud: number;
+    longitud: number;
+    radio_m: number;
+  }>({
+    nombre: '',
+    direccion: '',
+    latitud: -19.033333,
+    longitud: -65.262222,
+    radio_m: 150
   });
 
   const showNotification = (text: string) => {
@@ -264,6 +282,76 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     setNiveles(updated);
     saveLocalNiveles(updated);
     showNotification('Estado del nivel actualizado.');
+  };
+
+  /* ================= SEDES CRUD & GPS CONFIG ================= */
+  const handleOpenAddSede = () => {
+    setEditingSede(null);
+    setSedeForm({
+      nombre: '',
+      direccion: '',
+      latitud: -19.033333,
+      longitud: -65.262222,
+      radio_m: 150
+    });
+    setIsSedeModalOpen(true);
+  };
+
+  const handleOpenEditSede = (s: Sede) => {
+    setEditingSede(s);
+    setSedeForm({
+      nombre: s.nombre,
+      direccion: s.direccion || '',
+      latitud: s.latitud || -19.033333,
+      longitud: s.longitud || -65.262222,
+      radio_m: s.radio_m || 150
+    });
+    setIsSedeModalOpen(true);
+  };
+
+  const handleSaveSede = async (ev: React.FormEvent) => {
+    ev.preventDefault();
+    let updated: Sede[];
+    if (editingSede) {
+      updated = sedes.map(s => (s.id === editingSede.id ? { ...s, ...sedeForm } : s));
+      showNotification(`Sede "${sedeForm.nombre}" actualizada con radio ${sedeForm.radio_m}m.`);
+    } else {
+      const newS: Sede = {
+        id: `sede-${Date.now()}`,
+        nombre: sedeForm.nombre,
+        direccion: sedeForm.direccion,
+        latitud: sedeForm.latitud,
+        longitud: sedeForm.longitud,
+        radio_m: sedeForm.radio_m,
+        activo: true
+      };
+      updated = [...sedes, newS];
+      showNotification(`Sede "${newS.nombre}" añadida correctamente.`);
+    }
+
+    setSedes(updated);
+
+    if (supabase) {
+      if (editingSede) {
+        await supabase.from('sedes').update({
+          nombre: sedeForm.nombre,
+          direccion: sedeForm.direccion,
+          latitud: sedeForm.latitud,
+          longitud: sedeForm.longitud,
+          radio_m: sedeForm.radio_m
+        }).eq('id', editingSede.id);
+      } else {
+        await supabase.from('sedes').insert({
+          nombre: sedeForm.nombre,
+          direccion: sedeForm.direccion,
+          latitud: sedeForm.latitud,
+          longitud: sedeForm.longitud,
+          radio_m: sedeForm.radio_m
+        });
+      }
+    }
+
+    setIsSedeModalOpen(false);
   };
 
   return (
@@ -730,22 +818,53 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       {activeAdminSubTab === 'sedes' && (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
-            <h3 className="font-extrabold text-base text-[#17324D]">Sedes Educativas</h3>
-            <button className="h-9 px-3 bg-[#00A651] text-white font-bold text-xs rounded-xl flex items-center gap-1">
-              <Plus className="w-4 h-4" /> <span>Añadir Sede</span>
+            <div>
+              <h3 className="font-extrabold text-base text-[#17324D]">Sedes Educativas</h3>
+              <p className="text-xs text-slate-500 font-medium">Configuración de coordenadas GPS y radio permitido en metros</p>
+            </div>
+            <button
+              onClick={handleOpenAddSede}
+              className="h-9 px-3 bg-[#00A651] hover:bg-[#008f45] text-white font-bold text-xs rounded-xl flex items-center gap-1 shadow-xs"
+            >
+              <Plus className="w-4 h-4 text-[#FFC845]" /> <span>Añadir Sede</span>
             </button>
           </div>
 
           <div className="space-y-3">
             {sedes.map(s => (
-              <div key={s.id} className="p-4 bg-white rounded-3xl border border-slate-200 shadow-xs space-y-1">
-                <div className="flex justify-between items-center">
-                  <h4 className="font-extrabold text-base text-[#17324D]">{s.nombre}</h4>
-                  <span className="bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2 py-0.5 rounded-full">
+              <div key={s.id} className="p-4 bg-white rounded-3xl border border-slate-200 shadow-xs space-y-3">
+                <div className="flex justify-between items-start">
+                  <div>
+                    <h4 className="font-extrabold text-base text-[#17324D]">{s.nombre}</h4>
+                    <p className="text-xs text-slate-500 font-medium">{s.direccion || 'Sin dirección registrada'}</p>
+                  </div>
+                  <span className="bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2.5 py-0.5 rounded-full border border-emerald-200">
                     Activa
                   </span>
                 </div>
-                <p className="text-xs text-slate-500 font-medium">{s.direccion}</p>
+
+                <div className="grid grid-cols-3 gap-2 bg-slate-50 p-3 rounded-2xl border border-slate-200 text-xs font-medium text-slate-700">
+                  <div>
+                    <span className="text-[10px] text-slate-400 font-extrabold block uppercase">Latitud</span>
+                    <strong className="text-slate-900">{s.latitud || -19.033333}</strong>
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-slate-400 font-extrabold block uppercase">Longitud</span>
+                    <strong className="text-slate-900">{s.longitud || -65.262222}</strong>
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-slate-400 font-extrabold block uppercase">Radio GPS</span>
+                    <strong className="text-[#00A651] font-extrabold">{s.radio_m || 150} metros</strong>
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => handleOpenEditSede(s)}
+                  className="w-full h-9 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 transition-all"
+                >
+                  <Pencil className="w-3.5 h-3.5 text-[#00A651]" />
+                  <span>Editar Coordenadas GPS y Radio</span>
+                </button>
               </div>
             ))}
           </div>
@@ -974,6 +1093,110 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                   className="h-11 px-5 bg-[#00A651] hover:bg-[#008f45] text-white font-extrabold rounded-xl shadow-xs"
                 >
                   Guardar Nivel
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL SEDES GPS CONFIG */}
+      {isSedeModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-4 animate-fade-in">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <h3 className="font-extrabold text-lg text-[#17324D]">
+                {editingSede ? 'Editar Sede y Coordenadas GPS' : 'Añadir Nueva Sede'}
+              </h3>
+              <button
+                onClick={() => setIsSedeModalOpen(false)}
+                className="p-1 rounded-xl text-slate-400 hover:text-slate-600 hover:bg-slate-100"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveSede} className="space-y-3 text-xs font-bold">
+              <div>
+                <label className="block text-slate-700 mb-1">Nombre de la Sede *</label>
+                <input
+                  type="text"
+                  placeholder="Ej. Sede Poroma, Sede San Juan de Horcas"
+                  value={sedeForm.nombre}
+                  onChange={e => setSedeForm({ ...sedeForm, nombre: e.target.value })}
+                  className="w-full h-11 px-3 bg-slate-50 border border-slate-300 rounded-xl outline-none font-extrabold text-slate-900"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-slate-700 mb-1">Dirección / Ubicación Referencial</label>
+                <input
+                  type="text"
+                  placeholder="Ej. Centro Poblado de Poroma"
+                  value={sedeForm.direccion}
+                  onChange={e => setSedeForm({ ...sedeForm, direccion: e.target.value })}
+                  className="w-full h-11 px-3 bg-slate-50 border border-slate-300 rounded-xl outline-none font-medium text-slate-900"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-slate-700 mb-1">Latitud GPS *</label>
+                  <input
+                    type="number"
+                    step="0.000001"
+                    placeholder="-19.033333"
+                    value={sedeForm.latitud}
+                    onChange={e => setSedeForm({ ...sedeForm, latitud: parseFloat(e.target.value) || 0 })}
+                    className="w-full h-11 px-3 bg-slate-50 border border-slate-300 rounded-xl outline-none font-medium text-slate-900"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-slate-700 mb-1">Longitud GPS *</label>
+                  <input
+                    type="number"
+                    step="0.000001"
+                    placeholder="-65.262222"
+                    value={sedeForm.longitud}
+                    onChange={e => setSedeForm({ ...sedeForm, longitud: parseFloat(e.target.value) || 0 })}
+                    className="w-full h-11 px-3 bg-slate-50 border border-slate-300 rounded-xl outline-none font-medium text-slate-900"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-slate-700 mb-1">Radio Permitido (metros) *</label>
+                <input
+                  type="number"
+                  min="10"
+                  max="5000"
+                  value={sedeForm.radio_m}
+                  onChange={e => setSedeForm({ ...sedeForm, radio_m: parseInt(e.target.value, 10) || 150 })}
+                  className="w-full h-11 px-3 bg-slate-50 border border-slate-300 rounded-xl outline-none font-extrabold text-[#00A651]"
+                  required
+                />
+                <p className="text-[10px] text-slate-400 font-medium mt-1">
+                  Default: 150 metros. Todo marcado fuera de este radio generará una excepción pendiente de revisión.
+                </p>
+              </div>
+
+              <div className="pt-2 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsSedeModalOpen(false)}
+                  className="h-11 px-4 bg-slate-100 text-slate-700 font-bold rounded-xl"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="h-11 px-5 bg-[#00A651] hover:bg-[#008f45] text-white font-extrabold rounded-xl shadow-xs"
+                >
+                  Guardar Sede
                 </button>
               </div>
             </form>

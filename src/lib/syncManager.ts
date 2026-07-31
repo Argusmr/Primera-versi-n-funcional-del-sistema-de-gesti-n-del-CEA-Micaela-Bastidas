@@ -45,25 +45,88 @@ export async function processSyncQueue(): Promise<{ success: boolean; syncedCoun
     for (const item of pendingDocentes) {
       if (supabase) {
         if (item.tipo === 'ingreso') {
-          const { error } = await supabase.rpc('registrar_ingreso', {
+          let selfiePath = '';
+          if (item.selfie_base64) {
+            try {
+              // Convert base64 to Blob
+              const byteCharacters = atob(item.selfie_base64.split(',')[1] || item.selfie_base64);
+              const byteNumbers = new Array(byteCharacters.length);
+              for (let i = 0; i < byteCharacters.length; i++) {
+                byteNumbers[i] = byteCharacters.charCodeAt(i);
+              }
+              const byteArray = new Uint8Array(byteNumbers);
+              const blob = new Blob([byteArray], { type: 'image/jpeg' });
+
+              const fileName = `${item.docente_id}/${item.timestamp || Date.now()}.jpg`;
+              const { data: uploadData, error: uploadErr } = await supabase.storage
+                .from('selfies-asistencia')
+                .upload(fileName, blob, { contentType: 'image/jpeg', upsert: true });
+
+              if (!uploadErr && uploadData) {
+                selfiePath = uploadData.path;
+              }
+            } catch (imgErr) {
+              console.warn('Error al subir selfie offline:', imgErr);
+            }
+          }
+
+          // Attempt RPC with GPS or fallback
+          const rpcParams = {
             p_docente_id: item.docente_id,
             p_sync_key: item.sync_key,
             p_hora_local: item.hora_local,
             p_es_offline: true,
+            p_latitud: item.latitud || null,
+            p_longitud: item.longitud || null,
+            p_precision: item.precision_gps || null,
+            p_distancia: item.distancia_m || null,
+            p_estado_gps: item.estado_gps || 'dentro_rango',
+            p_selfie_url: selfiePath || null,
+            p_observacion_excepcion: item.observacion_excepcion || null,
+            p_estado_excepcion: item.estado_excepcion || 'ninguna',
             p_observacion: item.observacion || 'Registrado offline y sincronizado'
-          });
+          };
+
+          let { error } = await supabase.rpc('registrar_ingreso_gps', rpcParams);
+          if (error && error.message?.includes('function')) {
+            // Fallback to legacy RPC
+            const fallback = await supabase.rpc('registrar_ingreso', {
+              p_docente_id: item.docente_id,
+              p_sync_key: item.sync_key,
+              p_hora_local: item.hora_local,
+              p_es_offline: true,
+              p_observacion: item.observacion || 'Registrado offline y sincronizado'
+            });
+            error = fallback.error;
+          }
+
           if (!error) {
             await removeOfflineDocenteAsistencia(item.sync_key);
             syncedCount++;
           }
         } else if (item.tipo === 'salida') {
-          const { error } = await supabase.rpc('registrar_salida', {
+          let { error } = await supabase.rpc('registrar_salida_gps', {
             p_docente_id: item.docente_id,
             p_sync_key: item.sync_key,
             p_hora_local: item.hora_local,
             p_es_offline: true,
+            p_latitud: item.latitud || null,
+            p_longitud: item.longitud || null,
+            p_precision: item.precision_gps || null,
             p_observacion: item.observacion || 'Registrado offline y sincronizado'
           });
+
+          if (error && error.message?.includes('function')) {
+            const fallback = await supabase.rpc('registrar_salida', {
+              p_docente_id: item.docente_id,
+              p_sync_key: item.sync_key,
+              p_hora_local: item.hora_local,
+              p_es_offline: true,
+              p_observacion: item.observacion || 'Registrado offline y sincronizado'
+            });
+            error = fallback.error;
+          }
+
           if (!error) {
             await removeOfflineDocenteAsistencia(item.sync_key);
             syncedCount++;

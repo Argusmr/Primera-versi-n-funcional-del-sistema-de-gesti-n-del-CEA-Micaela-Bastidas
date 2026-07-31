@@ -7,6 +7,16 @@ export interface OfflineAsistenciaDocente {
   hora_local: string;
   observacion?: string;
   timestamp: number;
+
+  // GPS y Selfie fields for offline storage
+  latitud?: number;
+  longitud?: number;
+  precision_gps?: number;
+  distancia_m?: number;
+  estado_gps?: 'dentro_rango' | 'fuera_rango' | 'gps_impreciso' | 'sin_gps';
+  selfie_base64?: string; // Stored offline as Base64/Blob in IndexedDB
+  observacion_excepcion?: string;
+  estado_excepcion?: 'ninguna' | 'pendiente_revision' | 'aprobada' | 'rechazada';
 }
 
 export interface OfflineAsistenciaEstudiante {
