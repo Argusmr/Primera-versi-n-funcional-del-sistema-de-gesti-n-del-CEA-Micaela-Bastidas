@@ -15,10 +15,9 @@ import { AdminPanel } from './components/AdminPanel';
 import { AddTeacherModal, AddStudentModal, PublishModal } from './components/Modals';
 
 import { Perfil, DatosInstitucionales } from './types';
-import { checkIsOnline, getCurrentUserProfile } from './lib/supabase';
+import { checkIsOnline, supabase, isSupabaseConfigured } from './lib/supabase';
 import { getPendingSyncCount } from './lib/db';
 import { SyncManager } from './lib/syncManager';
-import { MOCK_DOCENTES } from './lib/mockData';
 import { downloadDocenteAttendanceReport } from './lib/excelExport';
 import { getLocalDatosInstitucionales, loadDatosInstitucionales } from './lib/institutional';
 
@@ -103,13 +102,71 @@ export function App() {
     }
   };
 
+  // Supabase Auth session & persistence
+  useEffect(() => {
+    if (!isSupabaseConfigured || !supabase) return;
+
+    let isMounted = true;
+
+    const loadSessionProfile = async (userId: string) => {
+      try {
+        const { data: profile, error } = await supabase
+          .from('perfiles')
+          .select('*')
+          .eq('id', userId)
+          .single();
+
+        if (error || !profile) {
+          console.error('No se encontró perfil en public.perfiles para el usuario autenticado.');
+          await supabase.auth.signOut();
+          if (isMounted) setCurrentUser(null);
+          return;
+        }
+
+        if (isMounted) {
+          setCurrentUser(profile as Perfil);
+        }
+      } catch (err) {
+        console.error('Error al cargar el perfil del usuario:', err);
+        if (isMounted) setCurrentUser(null);
+      }
+    };
+
+    // Recover existing active session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user) {
+        loadSessionProfile(session.user.id);
+      }
+    });
+
+    // Subscribe to auth state changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if ((event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') && session?.user) {
+        loadSessionProfile(session.user.id);
+      } else if (event === 'SIGNED_OUT') {
+        if (isMounted) {
+          setCurrentUser(null);
+          setActiveTab('inicio');
+        }
+      }
+    });
+
+    return () => {
+      isMounted = false;
+      subscription.unsubscribe();
+    };
+  }, []);
+
   const handleLoginSuccess = (user: Perfil) => {
     setCurrentUser(user);
     setShowLoginModal(false);
     setActiveTab('inicio');
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    if (isSupabaseConfigured && supabase) {
+      await supabase.auth.signOut();
+    }
     setCurrentUser(null);
     setActiveTab('inicio');
   };

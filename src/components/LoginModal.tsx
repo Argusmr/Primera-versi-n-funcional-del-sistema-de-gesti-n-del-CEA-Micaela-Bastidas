@@ -1,8 +1,7 @@
 import React, { useState } from 'react';
-import { LogIn, UserCheck, Shield, AlertCircle, Key, Info } from 'lucide-react';
+import { LogIn, AlertCircle, Key } from 'lucide-react';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { Perfil } from '../types';
-import { MOCK_SUPERADMIN, MOCK_DOCENTES } from '../lib/mockData';
 
 interface LoginModalProps {
   onLoginSuccess: (user: Perfil) => void;
@@ -26,61 +25,47 @@ export const LoginModal: React.FC<LoginModalProps> = ({ onLoginSuccess, onCancel
       return;
     }
 
+    if (!isSupabaseConfigured || !supabase) {
+      setErrorMsg('Supabase no está configurado en las variables de entorno. Verifique VITE_SUPABASE_URL y VITE_SUPABASE_ANON_KEY.');
+      return;
+    }
+
     setLoading(true);
     setErrorMsg(null);
 
-    if (isSupabaseConfigured && supabase) {
-      try {
-        const { data, error } = await supabase.auth.signInWithPassword({
-          email,
-          password,
-        });
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
 
-        if (error) {
-          setErrorMsg(error.message || 'Credenciales incorrectas');
+      if (error) {
+        setErrorMsg(error.message || 'Credenciales incorrectas');
+        setLoading(false);
+        return;
+      }
+
+      if (data.user) {
+        // Fetch user profile from perfiles table
+        const { data: profile, error: profileErr } = await supabase
+          .from('perfiles')
+          .select('*')
+          .eq('id', data.user.id)
+          .single();
+
+        if (profileErr || !profile) {
+          setErrorMsg('No se encontró un perfil docente asignado a esta cuenta.');
           setLoading(false);
           return;
         }
 
-        if (data.user) {
-          // Fetch user profile from perfiles table
-          const { data: profile, error: profileErr } = await supabase
-            .from('perfiles')
-            .select('*')
-            .eq('id', data.user.id)
-            .single();
-
-          if (profileErr || !profile) {
-            setErrorMsg('No se encontró el perfil docente asignado a esta cuenta.');
-            setLoading(false);
-            return;
-          }
-
-          onLoginSuccess(profile as Perfil);
-        }
-      } catch (err: any) {
-        setErrorMsg(err.message || 'Error de conexión con Supabase');
-      } finally {
-        setLoading(false);
+        onLoginSuccess(profile as Perfil);
       }
-    } else {
-      // Demo authentication mode matching provided email
-      if (email.toLowerCase().includes('director') || email.toLowerCase().includes('mario') || email.toLowerCase().includes('malgus')) {
-        onLoginSuccess(MOCK_SUPERADMIN);
-      } else {
-        const found = MOCK_DOCENTES.find(d => d.nombre_completo.toLowerCase().includes(email.toLowerCase())) || MOCK_DOCENTES[1];
-        onLoginSuccess(found);
-      }
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Error de conexión con Supabase');
+    } finally {
       setLoading(false);
     }
-  };
-
-  const handleQuickDemoDocente = () => {
-    onLoginSuccess(MOCK_DOCENTES[1]); // Elena Ramos
-  };
-
-  const handleQuickDemoDirector = () => {
-    onLoginSuccess(MOCK_SUPERADMIN); // Director Mario Gutiérrez
   };
 
   return (
@@ -100,12 +85,9 @@ export const LoginModal: React.FC<LoginModalProps> = ({ onLoginSuccess, onCancel
         )}
 
         {!isSupabaseConfigured && (
-          <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-xs text-emerald-900 space-y-1">
-            <div className="font-bold flex items-center gap-1.5">
-              <Info className="w-4 h-4 text-[#00A651]" />
-              <span>Modo Demostración / Sin Supabase configurado</span>
-            </div>
-            <p>Puede ingresar directamente utilizando los accesos rápidos a continuación.</p>
+          <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-800 space-y-1">
+            <div className="font-bold">Supabase no configurado</div>
+            <p>Se requieren las variables VITE_SUPABASE_URL y VITE_SUPABASE_ANON_KEY para iniciar sesión.</p>
           </div>
         )}
 
@@ -148,31 +130,8 @@ export const LoginModal: React.FC<LoginModalProps> = ({ onLoginSuccess, onCancel
           </button>
         </form>
 
-        {/* Demo Quick Switches */}
-        <div className="pt-2 border-t border-slate-200 space-y-2">
-          <p className="text-center text-xs font-semibold text-slate-500">O Seleccione Perfil para Evaluación:</p>
-
-          <div className="grid grid-cols-2 gap-2">
-            <button
-              onClick={handleQuickDemoDirector}
-              className="h-12 bg-emerald-50 hover:bg-emerald-100 text-[#00A651] border border-emerald-200 font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 px-2 text-center"
-            >
-              <Shield className="w-4 h-4 shrink-0 text-[#00A651]" />
-              <span>Rol Director</span>
-            </button>
-
-            <button
-              onClick={handleQuickDemoDocente}
-              className="h-12 bg-teal-50 hover:bg-teal-100 text-[#11B8AE] border border-teal-200 font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 px-2 text-center"
-            >
-              <UserCheck className="w-4 h-4 shrink-0 text-[#11B8AE]" />
-              <span>Rol Docente</span>
-            </button>
-          </div>
-        </div>
-
         {/* Admin Setup Guide Button */}
-        <div className="text-center">
+        <div className="text-center pt-2">
           <button
             onClick={() => setShowSuperadminHelp(!showSuperadminHelp)}
             className="text-xs text-slate-500 underline font-medium hover:text-slate-800"
