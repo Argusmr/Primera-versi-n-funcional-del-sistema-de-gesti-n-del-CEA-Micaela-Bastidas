@@ -480,6 +480,31 @@ BEGIN
 END;
 $$;
 
+-- Funciones auxiliares para verificar roles sin causar recursión en RLS
+CREATE OR REPLACE FUNCTION public.es_superadmin(user_id UUID DEFAULT auth.uid())
+RETURNS BOOLEAN
+LANGUAGE sql
+SECURITY DEFINER
+STABLE
+AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public.perfiles 
+    WHERE id = user_id AND rol = 'superadmin'
+  );
+$$;
+
+CREATE OR REPLACE FUNCTION public.es_publicador(user_id UUID DEFAULT auth.uid())
+RETURNS BOOLEAN
+LANGUAGE sql
+SECURITY DEFINER
+STABLE
+AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public.perfiles 
+    WHERE id = user_id AND (rol = 'superadmin' OR puede_publicar = true)
+  );
+$$;
+
 -- RLS (ROW LEVEL SECURITY) POLICIES
 ALTER TABLE public.perfiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.programas ENABLE ROW LEVEL SECURITY;
@@ -504,7 +529,7 @@ ALTER TABLE public.auditoria ENABLE ROW LEVEL SECURITY;
 -- Politica: Perfiles
 CREATE POLICY "Superadmin gestiona perfiles" ON public.perfiles
   FOR ALL USING (
-    EXISTS (SELECT 1 FROM public.perfiles WHERE id = auth.uid() AND rol = 'superadmin')
+    public.es_superadmin()
   );
 
 CREATE POLICY "Docente lee su propio perfil" ON public.perfiles
@@ -519,7 +544,7 @@ CREATE POLICY "Lectura autenticada de grupos" ON public.grupos FOR SELECT USING 
 -- Politica: Asistencias Docentes
 CREATE POLICY "Superadmin ve todas las asistencias docentes" ON public.asistencias_docentes
   FOR ALL USING (
-    EXISTS (SELECT 1 FROM public.perfiles WHERE id = auth.uid() AND rol = 'superadmin')
+    public.es_superadmin()
   );
 
 CREATE POLICY "Docente ve su propia asistencia" ON public.asistencias_docentes
@@ -528,7 +553,7 @@ CREATE POLICY "Docente ve su propia asistencia" ON public.asistencias_docentes
 -- Politica: Estudiantes
 CREATE POLICY "Superadmin gestiona estudiantes" ON public.estudiantes
   FOR ALL USING (
-    EXISTS (SELECT 1 FROM public.perfiles WHERE id = auth.uid() AND rol = 'superadmin')
+    public.es_superadmin()
   );
 
 CREATE POLICY "Docente ve estudiantes asignados" ON public.estudiantes
@@ -542,7 +567,7 @@ CREATE POLICY "Docente ve estudiantes asignados" ON public.estudiantes
 -- Politica: Asistencia Estudiantes
 CREATE POLICY "Superadmin gestiona asistencia estudiantil" ON public.asistencias_estudiantes
   FOR ALL USING (
-    EXISTS (SELECT 1 FROM public.perfiles WHERE id = auth.uid() AND rol = 'superadmin')
+    public.es_superadmin()
   );
 
 CREATE POLICY "Docente gestiona asistencia de sus grupos" ON public.asistencias_estudiantes
@@ -559,10 +584,7 @@ CREATE POLICY "Lectura publica autenticada publicaciones" ON public.publicacione
 
 CREATE POLICY "Publicador gestiona publicaciones" ON public.publicaciones
   FOR ALL USING (
-    EXISTS (
-      SELECT 1 FROM public.perfiles 
-      WHERE id = auth.uid() AND (rol = 'superadmin' OR puede_publicar = true)
-    )
+    public.es_publicador()
   );
 
 -- STORAGE BUCKET setup script for Supabase
@@ -576,8 +598,5 @@ CREATE POLICY "Acceso publico lectura archivos" ON storage.objects
 CREATE POLICY "Publicadores suben archivos" ON storage.objects 
   FOR INSERT WITH CHECK (
     bucket_id = 'documentos_institucionales' AND
-    EXISTS (
-      SELECT 1 FROM public.perfiles 
-      WHERE id = auth.uid() AND (rol = 'superadmin' OR puede_publicar = true)
-    )
+    public.es_publicador()
   );
