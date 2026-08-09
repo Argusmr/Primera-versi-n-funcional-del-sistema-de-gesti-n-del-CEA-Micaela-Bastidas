@@ -289,8 +289,9 @@ RETURNS TIMESTAMPTZ
 LANGUAGE sql
 SECURITY DEFINER
 STABLE
+SET search_path = ''
 AS $$
-  SELECT now();
+  SELECT pg_catalog.now();
 $$;
 
 -- RPC: Registrar Ingreso Docente Seguro
@@ -304,9 +305,10 @@ CREATE OR REPLACE FUNCTION public.registrar_ingreso(
 RETURNS JSONB
 LANGUAGE plpgsql
 SECURITY DEFINER
+SET search_path = ''
 AS $$
 DECLARE
-  v_hora_servidor TIMESTAMPTZ := now();
+  v_hora_servidor TIMESTAMPTZ := pg_catalog.now();
   v_fecha DATE := (v_hora_servidor AT TIME ZONE 'America/La_Paz')::DATE;
   v_ingreso_oficial TIMESTAMPTZ;
   v_horario RECORD;
@@ -330,7 +332,7 @@ BEGIN
   -- Comprobar si ya existe un registro con esta sync_key
   SELECT * INTO v_existente FROM public.asistencias_docentes WHERE sync_key = p_sync_key;
   IF FOUND THEN
-    RETURN to_jsonb(v_existente);
+    RETURN pg_catalog.to_jsonb(v_existente);
   END IF;
 
   -- Comprobar si ya registró ingreso hoy
@@ -394,7 +396,7 @@ BEGIN
   )
   RETURNING * INTO v_res;
 
-  RETURN to_jsonb(v_res);
+  RETURN pg_catalog.to_jsonb(v_res);
 END;
 $$;
 
@@ -409,9 +411,10 @@ CREATE OR REPLACE FUNCTION public.registrar_salida(
 RETURNS JSONB
 LANGUAGE plpgsql
 SECURITY DEFINER
+SET search_path = ''
 AS $$
 DECLARE
-  v_hora_servidor TIMESTAMPTZ := now();
+  v_hora_servidor TIMESTAMPTZ := pg_catalog.now();
   v_fecha DATE := (v_hora_servidor AT TIME ZONE 'America/La_Paz')::DATE;
   v_salida_oficial TIMESTAMPTZ;
   v_horario RECORD;
@@ -439,7 +442,7 @@ BEGIN
   END IF;
 
   IF v_asistencia.hora_salida_oficial IS NOT NULL THEN
-    RETURN to_jsonb(v_asistencia);
+    RETURN pg_catalog.to_jsonb(v_asistencia);
   END IF;
 
   -- Obtener horario
@@ -476,7 +479,7 @@ BEGIN
   WHERE id = v_asistencia.id
   RETURNING * INTO v_res;
 
-  RETURN to_jsonb(v_res);
+  RETURN pg_catalog.to_jsonb(v_res);
 END;
 $$;
 
@@ -486,6 +489,7 @@ RETURNS BOOLEAN
 LANGUAGE sql
 SECURITY DEFINER
 STABLE
+SET search_path = ''
 AS $$
   SELECT EXISTS (
     SELECT 1 FROM public.perfiles 
@@ -498,6 +502,7 @@ RETURNS BOOLEAN
 LANGUAGE sql
 SECURITY DEFINER
 STABLE
+SET search_path = ''
 AS $$
   SELECT EXISTS (
     SELECT 1 FROM public.perfiles 
