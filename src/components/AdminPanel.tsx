@@ -14,11 +14,13 @@ import {
   Power,
   X,
   Layers,
-  GraduationCap
+  GraduationCap,
+  AlertCircle,
+  RefreshCw
 } from 'lucide-react';
 import { Perfil, Sede, Horario, Programa, Etapa, NivelEducativo, DatosInstitucionales } from '../types';
 import { INITIAL_SEDES, INITIAL_HORARIOS } from '../lib/mockData';
-import { supabase } from '../lib/supabase';
+import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { getLocalDatosInstitucionales, saveDatosInstitucionales } from '../lib/institutional';
 import {
   getLocalProgramas,
@@ -49,7 +51,58 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const [academicCategory, setAcademicCategory] = useState<'programas' | 'etapas' | 'niveles'>('programas');
 
   const [horarios, setHorarios] = useState<Horario[]>(INITIAL_HORARIOS);
-  const [sedes, setSedes] = useState<Sede[]>(INITIAL_SEDES);
+  const [sedes, setSedes] = useState<Sede[]>([]);
+  const [loadingSedes, setLoadingSedes] = useState<boolean>(false);
+  const [sedesError, setSedesError] = useState<string | null>(null);
+  const [sedeModalError, setSedeModalError] = useState<string | null>(null);
+  const [isSavingSede, setIsSavingSede] = useState<boolean>(false);
+
+  const fetchSedes = async () => {
+    if (!isSupabaseConfigured || !supabase) {
+      setSedes(INITIAL_SEDES);
+      return;
+    }
+    setLoadingSedes(true);
+    setSedesError(null);
+    try {
+      const { data, error } = await supabase
+        .from('sedes')
+        .select('*')
+        .order('nombre', { ascending: true });
+
+      if (error) {
+        console.error('Error al cargar sedes de Supabase:', error);
+        setSedesError(`Error de Supabase: ${error.message}`);
+      } else if (data) {
+        const mapped: Sede[] = data.map((item: any) => ({
+          id: item.id,
+          nombre: item.nombre,
+          direccion: item.direccion || '',
+          latitud: item.latitud !== null && item.latitud !== undefined ? Number(item.latitud) : undefined,
+          longitud: item.longitud !== null && item.longitud !== undefined ? Number(item.longitud) : undefined,
+          radio_m: item.radio_m !== null && item.radio_m !== undefined ? Number(item.radio_m) : 150,
+          activo: item.activo ?? true,
+          created_at: item.created_at,
+        }));
+        setSedes(mapped);
+      }
+    } catch (err: any) {
+      console.error('Error de conexión al cargar sedes:', err);
+      setSedesError(err.message || 'Error de conexión al cargar sedes');
+    } finally {
+      setLoadingSedes(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchSedes();
+  }, []);
+
+  useEffect(() => {
+    if (activeAdminSubTab === 'sedes') {
+      fetchSedes();
+    }
+  }, [activeAdminSubTab]);
 
   // Dynamic Academic State
   const [programas, setProgramas] = useState<Programa[]>(() => getLocalProgramas());
@@ -287,6 +340,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   /* ================= SEDES CRUD & GPS CONFIG ================= */
   const handleOpenAddSede = () => {
     setEditingSede(null);
+    setSedeModalError(null);
     setSedeForm({
       nombre: '',
       direccion: '',
@@ -299,59 +353,92 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
   const handleOpenEditSede = (s: Sede) => {
     setEditingSede(s);
+    setSedeModalError(null);
     setSedeForm({
       nombre: s.nombre,
       direccion: s.direccion || '',
-      latitud: s.latitud || -19.033333,
-      longitud: s.longitud || -65.262222,
-      radio_m: s.radio_m || 150
+      latitud: s.latitud !== undefined && s.latitud !== null ? Number(s.latitud) : 0,
+      longitud: s.longitud !== undefined && s.longitud !== null ? Number(s.longitud) : 0,
+      radio_m: s.radio_m !== undefined && s.radio_m !== null ? Number(s.radio_m) : 150
     });
     setIsSedeModalOpen(true);
   };
 
   const handleSaveSede = async (ev: React.FormEvent) => {
     ev.preventDefault();
-    let updated: Sede[];
-    if (editingSede) {
-      updated = sedes.map(s => (s.id === editingSede.id ? { ...s, ...sedeForm } : s));
-      showNotification(`Sede "${sedeForm.nombre}" actualizada con radio ${sedeForm.radio_m}m.`);
-    } else {
-      const newS: Sede = {
-        id: `sede-${Date.now()}`,
-        nombre: sedeForm.nombre,
-        direccion: sedeForm.direccion,
-        latitud: sedeForm.latitud,
-        longitud: sedeForm.longitud,
-        radio_m: sedeForm.radio_m,
-        activo: true
-      };
-      updated = [...sedes, newS];
-      showNotification(`Sede "${newS.nombre}" añadida correctamente.`);
-    }
+    setSedeModalError(null);
+    setIsSavingSede(true);
 
-    setSedes(updated);
+    if (isSupabaseConfigured && supabase) {
+      try {
+        if (editingSede) {
+          const { error } = await supabase
+            .from('sedes')
+            .update({
+              nombre: sedeForm.nombre,
+              direccion: sedeForm.direccion,
+              latitud: Number(sedeForm.latitud),
+              longitud: Number(sedeForm.longitud),
+              radio_m: Number(sedeForm.radio_m)
+            })
+            .eq('id', editingSede.id);
 
-    if (supabase) {
-      if (editingSede) {
-        await supabase.from('sedes').update({
-          nombre: sedeForm.nombre,
-          direccion: sedeForm.direccion,
-          latitud: sedeForm.latitud,
-          longitud: sedeForm.longitud,
-          radio_m: sedeForm.radio_m
-        }).eq('id', editingSede.id);
-      } else {
-        await supabase.from('sedes').insert({
-          nombre: sedeForm.nombre,
-          direccion: sedeForm.direccion,
-          latitud: sedeForm.latitud,
-          longitud: sedeForm.longitud,
-          radio_m: sedeForm.radio_m
-        });
+          if (error) {
+            console.error('Error al actualizar la sede en Supabase:', error);
+            setSedeModalError(`Error de Supabase: ${error.message}`);
+            setIsSavingSede(false);
+            return;
+          }
+        } else {
+          const { error } = await supabase
+            .from('sedes')
+            .insert({
+              nombre: sedeForm.nombre,
+              direccion: sedeForm.direccion,
+              latitud: Number(sedeForm.latitud),
+              longitud: Number(sedeForm.longitud),
+              radio_m: Number(sedeForm.radio_m)
+            });
+
+          if (error) {
+            console.error('Error al crear la sede en Supabase:', error);
+            setSedeModalError(`Error de Supabase: ${error.message}`);
+            setIsSavingSede(false);
+            return;
+          }
+        }
+
+        // Re-consultar los datos directamente desde Supabase después de guardar
+        await fetchSedes();
+        showNotification(`Sede "${sedeForm.nombre}" guardada correctamente en Supabase.`);
+        setIsSedeModalOpen(false);
+      } catch (err: any) {
+        setSedeModalError(err.message || 'Error inesperado al guardar la sede');
+      } finally {
+        setIsSavingSede(false);
       }
+    } else {
+      let updated: Sede[];
+      if (editingSede) {
+        updated = sedes.map(s => (s.id === editingSede.id ? { ...s, ...sedeForm } : s));
+        showNotification(`Sede "${sedeForm.nombre}" actualizada localmente.`);
+      } else {
+        const newS: Sede = {
+          id: `sede-${Date.now()}`,
+          nombre: sedeForm.nombre,
+          direccion: sedeForm.direccion,
+          latitud: sedeForm.latitud,
+          longitud: sedeForm.longitud,
+          radio_m: sedeForm.radio_m,
+          activo: true
+        };
+        updated = [...sedes, newS];
+        showNotification(`Sede "${newS.nombre}" añadida localmente.`);
+      }
+      setSedes(updated);
+      setIsSavingSede(false);
+      setIsSedeModalOpen(false);
     }
-
-    setIsSedeModalOpen(false);
   };
 
   return (
@@ -822,52 +909,80 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
               <h3 className="font-extrabold text-base text-[#17324D]">Sedes Educativas</h3>
               <p className="text-xs text-slate-500 font-medium">Configuración de coordenadas GPS y radio permitido en metros</p>
             </div>
-            <button
-              onClick={handleOpenAddSede}
-              className="h-9 px-3 bg-[#00A651] hover:bg-[#008f45] text-white font-bold text-xs rounded-xl flex items-center gap-1 shadow-xs"
-            >
-              <Plus className="w-4 h-4 text-[#FFC845]" /> <span>Añadir Sede</span>
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={fetchSedes}
+                disabled={loadingSedes}
+                className="h-9 px-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl flex items-center gap-1 transition-all disabled:opacity-50"
+                title="Recargar sedes desde Supabase"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 text-slate-600 ${loadingSedes ? 'animate-spin' : ''}`} />
+                <span>Actualizar</span>
+              </button>
+              <button
+                onClick={handleOpenAddSede}
+                className="h-9 px-3 bg-[#00A651] hover:bg-[#008f45] text-white font-bold text-xs rounded-xl flex items-center gap-1 shadow-xs"
+              >
+                <Plus className="w-4 h-4 text-[#FFC845]" /> <span>Añadir Sede</span>
+              </button>
+            </div>
           </div>
 
-          <div className="space-y-3">
-            {sedes.map(s => (
-              <div key={s.id} className="p-4 bg-white rounded-3xl border border-slate-200 shadow-xs space-y-3">
-                <div className="flex justify-between items-start">
-                  <div>
-                    <h4 className="font-extrabold text-base text-[#17324D]">{s.nombre}</h4>
-                    <p className="text-xs text-slate-500 font-medium">{s.direccion || 'Sin dirección registrada'}</p>
-                  </div>
-                  <span className="bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2.5 py-0.5 rounded-full border border-emerald-200">
-                    Activa
-                  </span>
-                </div>
+          {sedesError && (
+            <div className="p-3 bg-rose-50 border border-rose-200 text-rose-800 text-xs font-bold rounded-2xl flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+              <span>{sedesError}</span>
+            </div>
+          )}
 
-                <div className="grid grid-cols-3 gap-2 bg-slate-50 p-3 rounded-2xl border border-slate-200 text-xs font-medium text-slate-700">
-                  <div>
-                    <span className="text-[10px] text-slate-400 font-extrabold block uppercase">Latitud</span>
-                    <strong className="text-slate-900">{s.latitud || -19.033333}</strong>
+          {loadingSedes ? (
+            <div className="p-8 text-center text-xs font-bold text-slate-500 bg-white rounded-3xl border border-slate-200">
+              Cargando sedes desde Supabase...
+            </div>
+          ) : sedes.length === 0 ? (
+            <div className="p-8 text-center text-xs font-bold text-slate-500 bg-white rounded-3xl border border-slate-200">
+              No se encontraron sedes registradas en Supabase.
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {sedes.map(s => (
+                <div key={s.id} className="p-4 bg-white rounded-3xl border border-slate-200 shadow-xs space-y-3">
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <h4 className="font-extrabold text-base text-[#17324D]">{s.nombre}</h4>
+                      <p className="text-xs text-slate-500 font-medium">{s.direccion || 'Sin dirección registrada'}</p>
+                    </div>
+                    <span className="bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2.5 py-0.5 rounded-full border border-emerald-200">
+                      {s.activo ? 'Activa' : 'Inactiva'}
+                    </span>
                   </div>
-                  <div>
-                    <span className="text-[10px] text-slate-400 font-extrabold block uppercase">Longitud</span>
-                    <strong className="text-slate-900">{s.longitud || -65.262222}</strong>
-                  </div>
-                  <div>
-                    <span className="text-[10px] text-slate-400 font-extrabold block uppercase">Radio GPS</span>
-                    <strong className="text-[#00A651] font-extrabold">{s.radio_m || 150} metros</strong>
-                  </div>
-                </div>
 
-                <button
-                  onClick={() => handleOpenEditSede(s)}
-                  className="w-full h-9 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 transition-all"
-                >
-                  <Pencil className="w-3.5 h-3.5 text-[#00A651]" />
-                  <span>Editar Coordenadas GPS y Radio</span>
-                </button>
-              </div>
-            ))}
-          </div>
+                  <div className="grid grid-cols-3 gap-2 bg-slate-50 p-3 rounded-2xl border border-slate-200 text-xs font-medium text-slate-700">
+                    <div>
+                      <span className="text-[10px] text-slate-400 font-extrabold block uppercase">Latitud</span>
+                      <strong className="text-slate-900">{s.latitud !== undefined && s.latitud !== null ? s.latitud : 'Sin latitud'}</strong>
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-slate-400 font-extrabold block uppercase">Longitud</span>
+                      <strong className="text-slate-900">{s.longitud !== undefined && s.longitud !== null ? s.longitud : 'Sin longitud'}</strong>
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-slate-400 font-extrabold block uppercase">Radio GPS</span>
+                      <strong className="text-[#00A651] font-extrabold">{s.radio_m ?? 150} metros</strong>
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={() => handleOpenEditSede(s)}
+                    className="w-full h-9 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 transition-all"
+                  >
+                    <Pencil className="w-3.5 h-3.5 text-[#00A651]" />
+                    <span>Editar Coordenadas GPS y Radio</span>
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -1109,12 +1224,20 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 {editingSede ? 'Editar Sede y Coordenadas GPS' : 'Añadir Nueva Sede'}
               </h3>
               <button
+                type="button"
                 onClick={() => setIsSedeModalOpen(false)}
                 className="p-1 rounded-xl text-slate-400 hover:text-slate-600 hover:bg-slate-100"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
+
+            {sedeModalError && (
+              <div className="p-3 bg-rose-50 border border-rose-200 text-rose-800 text-xs font-bold rounded-xl flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                <span>{sedeModalError}</span>
+              </div>
+            )}
 
             <form onSubmit={handleSaveSede} className="space-y-3 text-xs font-bold">
               <div>
@@ -1188,15 +1311,17 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 <button
                   type="button"
                   onClick={() => setIsSedeModalOpen(false)}
-                  className="h-11 px-4 bg-slate-100 text-slate-700 font-bold rounded-xl"
+                  disabled={isSavingSede}
+                  className="h-11 px-4 bg-slate-100 text-slate-700 font-bold rounded-xl hover:bg-slate-200 transition-all disabled:opacity-50"
                 >
                   Cancelar
                 </button>
                 <button
                   type="submit"
-                  className="h-11 px-5 bg-[#00A651] hover:bg-[#008f45] text-white font-extrabold rounded-xl shadow-xs"
+                  disabled={isSavingSede}
+                  className="h-11 px-5 bg-[#00A651] hover:bg-[#008f45] text-white font-extrabold rounded-xl shadow-xs transition-all disabled:opacity-50 flex items-center gap-2"
                 >
-                  Guardar Sede
+                  {isSavingSede ? 'Guardando...' : 'Guardar Sede'}
                 </button>
               </div>
             </form>
