@@ -144,30 +144,31 @@ export async function saveControlDocumental(
 
   // 2. Supabase save
   if (supabase) {
-    try {
-      const { data, error } = await supabase
-        .from('control_documental')
-        .upsert(
-          {
-            docente_id: updatedRecord.docente_id,
-            tiene_plan_modular: updatedRecord.tiene_plan_modular,
-            formato_plan_modular: updatedRecord.formato_plan_modular,
-            tiene_planificacion_curricular: updatedRecord.tiene_planificacion_curricular,
-            fecha_revision: updatedRecord.fecha_revision || new Date().toISOString().slice(0, 10),
-            observacion: updatedRecord.observacion || '',
-            updated_at: updatedRecord.updated_at,
-            updated_by: updatedByUserId
-          },
-          { onConflict: 'docente_id' }
-        )
-        .select()
-        .single();
+    const { data, error } = await supabase
+      .from('control_documental')
+      .upsert(
+        {
+          docente_id: updatedRecord.docente_id,
+          tiene_plan_modular: updatedRecord.tiene_plan_modular,
+          formato_plan_modular: updatedRecord.formato_plan_modular,
+          tiene_planificacion_curricular: updatedRecord.tiene_planificacion_curricular,
+          fecha_revision: updatedRecord.fecha_revision || new Date().toISOString().slice(0, 10),
+          observacion: updatedRecord.observacion || '',
+          updated_at: updatedRecord.updated_at,
+          updated_by: updatedByUserId
+        },
+        { onConflict: 'docente_id' }
+      )
+      .select()
+      .single();
 
-      if (data && !error) {
-        updatedRecord.id = data.id;
-      }
-    } catch (err) {
-      console.warn('Failed upsert control_documental to Supabase', err);
+    if (error) {
+      console.error('Error al guardar control_documental en Supabase:', error);
+      throw new Error(`Error en Supabase: ${error.message}`);
+    }
+
+    if (data) {
+      updatedRecord.id = data.id;
     }
   }
 

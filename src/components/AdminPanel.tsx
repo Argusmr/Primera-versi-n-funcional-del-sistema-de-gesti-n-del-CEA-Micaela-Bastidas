@@ -21,14 +21,17 @@ import {
 import { Perfil, Sede, Horario, Programa, Etapa, NivelEducativo, DatosInstitucionales } from '../types';
 import { INITIAL_SEDES, INITIAL_HORARIOS } from '../lib/mockData';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
-import { getLocalDatosInstitucionales, saveDatosInstitucionales } from '../lib/institutional';
+import { getLocalDatosInstitucionales, saveDatosInstitucionales, loadDatosInstitucionales } from '../lib/institutional';
 import {
   getLocalProgramas,
   saveLocalProgramas,
   getLocalEtapas,
   saveLocalEtapas,
   getLocalNiveles,
-  saveLocalNiveles
+  saveLocalNiveles,
+  loadProgramasFromSupabase,
+  loadEtapasFromSupabase,
+  loadNivelesFromSupabase
 } from '../lib/academic';
 import { AuditView } from './AuditView';
 
@@ -94,20 +97,69 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     }
   };
 
+  const fetchHorarios = async () => {
+    if (!isSupabaseConfigured || !supabase) {
+      setHorarios(INITIAL_HORARIOS);
+      return;
+    }
+    try {
+      const { data, error } = await supabase
+        .from('horarios')
+        .select('*, sedes(nombre)')
+        .order('nombre', { ascending: true });
+
+      if (error) {
+        console.error('Error al cargar horarios de Supabase:', error);
+      } else if (data) {
+        setHorarios(data as Horario[]);
+      }
+    } catch (err) {
+      console.error('Excepción al cargar horarios:', err);
+    }
+  };
+
+  const fetchProgramas = async () => {
+    const list = await loadProgramasFromSupabase();
+    setProgramas(list);
+  };
+
+  const fetchEtapas = async () => {
+    const list = await loadEtapasFromSupabase();
+    setEtapas(list);
+  };
+
+  const fetchNiveles = async () => {
+    const list = await loadNivelesFromSupabase();
+    setNiveles(list);
+  };
+
   useEffect(() => {
     fetchSedes();
+    fetchHorarios();
+    fetchProgramas();
+    fetchEtapas();
+    fetchNiveles();
   }, []);
 
   useEffect(() => {
-    if (activeAdminSubTab === 'sedes') {
-      fetchSedes();
+    if (activeAdminSubTab === 'sedes') fetchSedes();
+    if (activeAdminSubTab === 'horarios') fetchHorarios();
+    if (activeAdminSubTab === 'programas') {
+      fetchProgramas();
+      fetchEtapas();
+      fetchNiveles();
+    }
+    if (activeAdminSubTab === 'datos') {
+      loadDatosInstitucionales().then(res => {
+        if (res) setDatosForm(res);
+      });
     }
   }, [activeAdminSubTab]);
 
   // Dynamic Academic State
-  const [programas, setProgramas] = useState<Programa[]>(() => getLocalProgramas());
-  const [etapas, setEtapas] = useState<Etapa[]>(() => getLocalEtapas());
-  const [niveles, setNiveles] = useState<NivelEducativo[]>(() => getLocalNiveles());
+  const [programas, setProgramas] = useState<Programa[]>([]);
+  const [etapas, setEtapas] = useState<Etapa[]>([]);
+  const [niveles, setNiveles] = useState<NivelEducativo[]>([]);
 
   // Datos Institucionales Form state
   const [datosForm, setDatosForm] = useState<DatosInstitucionales>(
@@ -176,30 +228,60 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     setMsg(null);
 
     const res = await saveDatosInstitucionales(datosForm);
-    if (onUpdateDatosInstitucionales) {
-      onUpdateDatosInstitucionales(datosForm);
+    if (res.error) {
+      setMsg('Error al guardar en Supabase: ' + res.error);
+    } else {
+      if (onUpdateDatosInstitucionales) {
+        onUpdateDatosInstitucionales(datosForm);
+      }
+      showNotification('Datos institucionales guardados correctamente en Supabase.');
+      const reload = await loadDatosInstitucionales();
+      if (reload) setDatosForm(reload);
     }
-
     setIsSavingDatos(false);
-    showNotification(res.error ? `Guardado localmente. (${res.error})` : 'Datos institucionales guardados correctamente.');
   };
 
-  const handleToggleInvierno = (horarioId: string) => {
-    setHorarios(prev =>
-      prev.map(h => {
-        if (h.id === horarioId) {
-          const newInvierno = !h.es_invierno;
-          return {
-            ...h,
-            es_invierno: newInvierno,
-            hora_salida: newInvierno ? '21:30' : '22:00',
-            nombre: newInvierno ? 'Poroma - Horario de Invierno' : 'Poroma - Habitual (Noche)'
-          };
-        }
-        return h;
-      })
-    );
-    showNotification('Configuración de horario de invierno actualizada.');
+  const handleToggleInvierno = async (horarioId: string) => {
+    const target = horarios.find(h => h.id === horarioId);
+    if (!target) return;
+
+    const newInvierno = !target.es_invierno;
+    const newHoraSalida = newInvierno ? '21:30' : '22:00';
+    const cleanName = target.nombre.replace(' - Horario de Invierno', '').replace(' - Habitual (Noche)', '');
+    const newNombre = newInvierno ? `${cleanName} - Horario de Invierno` : `${cleanName} - Habitual (Noche)`;
+
+    if (isSupabaseConfigured && supabase) {
+      const { error } = await supabase
+        .from('horarios')
+        .update({
+          es_invierno: newInvierno,
+          hora_salida: newHoraSalida,
+          nombre: newNombre,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', horarioId);
+
+      if (error) {
+        showNotification('Error en Supabase: ' + error.message);
+        return;
+      }
+      await fetchHorarios();
+    } else {
+      setHorarios(prev =>
+        prev.map(h => {
+          if (h.id === horarioId) {
+            return {
+              ...h,
+              es_invierno: newInvierno,
+              hora_salida: newHoraSalida,
+              nombre: newNombre
+            };
+          }
+          return h;
+        })
+      );
+    }
+    showNotification('Configuración de horario de invierno actualizada en Supabase.');
   };
 
   /* ================= PROGRAMAS CRUD ================= */
@@ -215,33 +297,82 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     setIsProgramaModalOpen(true);
   };
 
-  const handleSavePrograma = (e: React.FormEvent) => {
+  const handleSavePrograma = async (e: React.FormEvent) => {
     e.preventDefault();
-    let updated: Programa[];
-    if (editingPrograma) {
-      updated = programas.map(p => p.id === editingPrograma.id ? { ...p, ...progForm } : p);
-      showNotification(`Programa ${progForm.codigo} actualizado correctamente.`);
-    } else {
-      const newP: Programa = {
-        id: `prog-${Date.now()}`,
-        codigo: progForm.codigo.toUpperCase(),
-        nombre: progForm.nombre,
-        descripcion: progForm.descripcion,
-        activo: true
-      };
-      updated = [...programas, newP];
-      showNotification(`Programa ${newP.codigo} añadido correctamente.`);
-    }
+    if (isSupabaseConfigured && supabase) {
+      if (editingPrograma) {
+        const { error } = await supabase
+          .from('programas')
+          .update({
+            codigo: progForm.codigo.toUpperCase(),
+            nombre: progForm.nombre,
+            descripcion: progForm.descripcion,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', editingPrograma.id);
 
-    setProgramas(updated);
-    saveLocalProgramas(updated);
+        if (error) {
+          showNotification('Error en Supabase: ' + error.message);
+          return;
+        }
+        showNotification(`Programa ${progForm.codigo} actualizado correctamente en Supabase.`);
+      } else {
+        const { error } = await supabase
+          .from('programas')
+          .insert({
+            codigo: progForm.codigo.toUpperCase(),
+            nombre: progForm.nombre,
+            descripcion: progForm.descripcion,
+            activo: true
+          });
+
+        if (error) {
+          showNotification('Error en Supabase: ' + error.message);
+          return;
+        }
+        showNotification(`Programa ${progForm.codigo.toUpperCase()} añadido correctamente en Supabase.`);
+      }
+      await fetchProgramas();
+    } else {
+      let updated: Programa[];
+      if (editingPrograma) {
+        updated = programas.map(p => p.id === editingPrograma.id ? { ...p, ...progForm } : p);
+      } else {
+        const newP: Programa = {
+          id: `prog-${Date.now()}`,
+          codigo: progForm.codigo.toUpperCase(),
+          nombre: progForm.nombre,
+          descripcion: progForm.descripcion,
+          activo: true
+        };
+        updated = [...programas, newP];
+      }
+      setProgramas(updated);
+      saveLocalProgramas(updated);
+    }
     setIsProgramaModalOpen(false);
   };
 
-  const handleToggleProgramaActive = (id: string) => {
-    const updated = programas.map(p => p.id === id ? { ...p, activo: !p.activo } : p);
-    setProgramas(updated);
-    saveLocalProgramas(updated);
+  const handleToggleProgramaActive = async (id: string) => {
+    const target = programas.find(p => p.id === id);
+    if (!target) return;
+
+    if (isSupabaseConfigured && supabase) {
+      const { error } = await supabase
+        .from('programas')
+        .update({ activo: !target.activo, updated_at: new Date().toISOString() })
+        .eq('id', id);
+
+      if (error) {
+        showNotification('Error en Supabase: ' + error.message);
+        return;
+      }
+      await fetchProgramas();
+    } else {
+      const updated = programas.map(p => p.id === id ? { ...p, activo: !p.activo } : p);
+      setProgramas(updated);
+      saveLocalProgramas(updated);
+    }
     showNotification('Estado del programa actualizado.');
   };
 
@@ -258,33 +389,82 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     setIsEtapaModalOpen(true);
   };
 
-  const handleSaveEtapa = (ev: React.FormEvent) => {
+  const handleSaveEtapa = async (ev: React.FormEvent) => {
     ev.preventDefault();
-    let updated: Etapa[];
-    if (editingEtapa) {
-      updated = etapas.map(e => e.id === editingEtapa.id ? { ...e, ...etapaForm } : e);
-      showNotification(`Etapa "${etapaForm.nombre}" actualizada.`);
-    } else {
-      const newE: Etapa = {
-        id: `etapa-${Date.now()}`,
-        nombre: etapaForm.nombre,
-        programa_codigo: etapaForm.programa_codigo,
-        descripcion: etapaForm.descripcion,
-        activo: true
-      };
-      updated = [...etapas, newE];
-      showNotification(`Etapa "${newE.nombre}" añadida correctamente.`);
-    }
+    if (isSupabaseConfigured && supabase) {
+      if (editingEtapa) {
+        const { error } = await supabase
+          .from('etapas')
+          .update({
+            nombre: etapaForm.nombre,
+            programa_codigo: etapaForm.programa_codigo,
+            descripcion: etapaForm.descripcion,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', editingEtapa.id);
 
-    setEtapas(updated);
-    saveLocalEtapas(updated);
+        if (error) {
+          showNotification('Error en Supabase: ' + error.message);
+          return;
+        }
+        showNotification(`Etapa "${etapaForm.nombre}" actualizada en Supabase.`);
+      } else {
+        const { error } = await supabase
+          .from('etapas')
+          .insert({
+            nombre: etapaForm.nombre,
+            programa_codigo: etapaForm.programa_codigo,
+            descripcion: etapaForm.descripcion,
+            activo: true
+          });
+
+        if (error) {
+          showNotification('Error en Supabase: ' + error.message);
+          return;
+        }
+        showNotification(`Etapa "${etapaForm.nombre}" añadida en Supabase.`);
+      }
+      await fetchEtapas();
+    } else {
+      let updated: Etapa[];
+      if (editingEtapa) {
+        updated = etapas.map(e => e.id === editingEtapa.id ? { ...e, ...etapaForm } : e);
+      } else {
+        const newE: Etapa = {
+          id: `etapa-${Date.now()}`,
+          nombre: etapaForm.nombre,
+          programa_codigo: etapaForm.programa_codigo,
+          descripcion: etapaForm.descripcion,
+          activo: true
+        };
+        updated = [...etapas, newE];
+      }
+      setEtapas(updated);
+      saveLocalEtapas(updated);
+    }
     setIsEtapaModalOpen(false);
   };
 
-  const handleToggleEtapaActive = (id: string) => {
-    const updated = etapas.map(e => e.id === id ? { ...e, activo: !e.activo } : e);
-    setEtapas(updated);
-    saveLocalEtapas(updated);
+  const handleToggleEtapaActive = async (id: string) => {
+    const target = etapas.find(e => e.id === id);
+    if (!target) return;
+
+    if (isSupabaseConfigured && supabase) {
+      const { error } = await supabase
+        .from('etapas')
+        .update({ activo: !target.activo, updated_at: new Date().toISOString() })
+        .eq('id', id);
+
+      if (error) {
+        showNotification('Error en Supabase: ' + error.message);
+        return;
+      }
+      await fetchEtapas();
+    } else {
+      const updated = etapas.map(e => e.id === id ? { ...e, activo: !e.activo } : e);
+      setEtapas(updated);
+      saveLocalEtapas(updated);
+    }
     showNotification('Estado de la etapa actualizado.');
   };
 
@@ -306,34 +486,85 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     setIsNivelModalOpen(true);
   };
 
-  const handleSaveNivel = (ev: React.FormEvent) => {
+  const handleSaveNivel = async (ev: React.FormEvent) => {
     ev.preventDefault();
-    let updated: NivelEducativo[];
-    if (editingNivel) {
-      updated = niveles.map(n => n.id === editingNivel.id ? { ...n, ...nivelForm } : n);
-      showNotification(`Nivel "${nivelForm.nombre}" actualizado.`);
-    } else {
-      const newN: NivelEducativo = {
-        id: `niv-${Date.now()}`,
-        nombre: nivelForm.nombre,
-        etapa_nombre: nivelForm.etapa_nombre,
-        programa_codigo: nivelForm.programa_codigo,
-        descripcion: nivelForm.descripcion,
-        activo: true
-      };
-      updated = [...niveles, newN];
-      showNotification(`Nivel "${newN.nombre}" añadido correctamente.`);
-    }
+    if (isSupabaseConfigured && supabase) {
+      if (editingNivel) {
+        const { error } = await supabase
+          .from('niveles')
+          .update({
+            nombre: nivelForm.nombre,
+            etapa_nombre: nivelForm.etapa_nombre,
+            programa_codigo: nivelForm.programa_codigo,
+            descripcion: nivelForm.descripcion,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', editingNivel.id);
 
-    setNiveles(updated);
-    saveLocalNiveles(updated);
+        if (error) {
+          showNotification('Error en Supabase: ' + error.message);
+          return;
+        }
+        showNotification(`Nivel "${nivelForm.nombre}" actualizado en Supabase.`);
+      } else {
+        const { error } = await supabase
+          .from('niveles')
+          .insert({
+            nombre: nivelForm.nombre,
+            etapa_nombre: nivelForm.etapa_nombre,
+            programa_codigo: nivelForm.programa_codigo,
+            descripcion: nivelForm.descripcion,
+            activo: true
+          });
+
+        if (error) {
+          showNotification('Error en Supabase: ' + error.message);
+          return;
+        }
+        showNotification(`Nivel "${nivelForm.nombre}" añadido en Supabase.`);
+      }
+      await fetchNiveles();
+    } else {
+      let updated: NivelEducativo[];
+      if (editingNivel) {
+        updated = niveles.map(n => n.id === editingNivel.id ? { ...n, ...nivelForm } : n);
+      } else {
+        const newN: NivelEducativo = {
+          id: `niv-${Date.now()}`,
+          nombre: nivelForm.nombre,
+          etapa_nombre: nivelForm.etapa_nombre,
+          programa_codigo: nivelForm.programa_codigo,
+          descripcion: nivelForm.descripcion,
+          activo: true
+        };
+        updated = [...niveles, newN];
+      }
+      setNiveles(updated);
+      saveLocalNiveles(updated);
+    }
     setIsNivelModalOpen(false);
   };
 
-  const handleToggleNivelActive = (id: string) => {
-    const updated = niveles.map(n => n.id === id ? { ...n, activo: !n.activo } : n);
-    setNiveles(updated);
-    saveLocalNiveles(updated);
+  const handleToggleNivelActive = async (id: string) => {
+    const target = niveles.find(n => n.id === id);
+    if (!target) return;
+
+    if (isSupabaseConfigured && supabase) {
+      const { error } = await supabase
+        .from('niveles')
+        .update({ activo: !target.activo, updated_at: new Date().toISOString() })
+        .eq('id', id);
+
+      if (error) {
+        showNotification('Error en Supabase: ' + error.message);
+        return;
+      }
+      await fetchNiveles();
+    } else {
+      const updated = niveles.map(n => n.id === id ? { ...n, activo: !n.activo } : n);
+      setNiveles(updated);
+      saveLocalNiveles(updated);
+    }
     showNotification('Estado del nivel actualizado.');
   };
 

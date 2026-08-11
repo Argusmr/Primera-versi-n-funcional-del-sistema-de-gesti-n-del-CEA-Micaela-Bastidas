@@ -19,15 +19,35 @@ export const EditTeacherModal: React.FC<EditTeacherModalProps> = ({
   const [cargoTitulo, setCargoTitulo] = useState(docente.nivel || docente.categoria || 'Docente');
   const [rda, setRda] = useState(docente.rda || '');
   const [especialidad, setEspecialidad] = useState(docente.especialidad || '');
-  const [sedeId, setSedeId] = useState(docente.sede_id || INITIAL_SEDES[0].id);
+  const [sedeId, setSedeId] = useState(docente.sede_id || '');
   const [materiasStr, setMateriasStr] = useState(
     Array.isArray(docente.materias) ? docente.materias.join(', ') : ''
   );
-  const [horarioId, setHorarioId] = useState(docente.horario_id || INITIAL_HORARIOS[0].id);
+  const [horarioId, setHorarioId] = useState(docente.horario_id || '');
   const [activo, setActivo] = useState<boolean>(docente.activo ?? true);
+
+  const [sedesList, setSedesList] = useState<Sede[]>([]);
+  const [horariosList, setHorariosList] = useState<Horario[]>([]);
 
   const [isSaving, setIsSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  React.useEffect(() => {
+    async function fetchCatalogs() {
+      if (isSupabaseConfigured && supabase) {
+        try {
+          const { data: sData } = await supabase.from('sedes').select('*').order('nombre');
+          if (sData) setSedesList(sData);
+
+          const { data: hData } = await supabase.from('horarios').select('*').order('nombre');
+          if (hData) setHorariosList(hData);
+        } catch (e) {
+          console.error('Error cargando catálogos para docente:', e);
+        }
+      }
+    }
+    fetchCatalogs();
+  }, []);
 
   const handleFormSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -39,8 +59,8 @@ export const EditTeacherModal: React.FC<EditTeacherModalProps> = ({
     setIsSaving(true);
     setErrorMsg(null);
 
-    const selectedSede = INITIAL_SEDES.find(s => s.id === sedeId);
-    const selectedHorario = INITIAL_HORARIOS.find(h => h.id === horarioId);
+    const selectedSede = sedesList.find(s => s.id === sedeId);
+    const selectedHorario = horariosList.find(h => h.id === horarioId);
 
     const materiasArray = materiasStr
       .split(',')
@@ -53,17 +73,16 @@ export const EditTeacherModal: React.FC<EditTeacherModalProps> = ({
       nivel: cargoTitulo.trim(),
       rda: rda.trim(),
       especialidad: especialidad.trim(),
-      sede_id: sedeId,
+      sede_id: sedeId || undefined,
       sede_nombre: selectedSede ? selectedSede.nombre : docente.sede_nombre,
       materias: materiasArray,
-      horario_id: horarioId,
+      horario_id: horarioId || undefined,
       horario_nombre: selectedHorario ? selectedHorario.nombre : docente.horario_nombre,
       activo: activo,
       updated_at: new Date().toISOString(),
     };
 
-    // Try saving to Supabase if configured & online
-    if (isSupabaseConfigured && supabase && checkIsOnline()) {
+    if (isSupabaseConfigured && supabase) {
       try {
         const { error } = await supabase
           .from('perfiles')
@@ -72,19 +91,23 @@ export const EditTeacherModal: React.FC<EditTeacherModalProps> = ({
             nivel: updated.nivel,
             rda: updated.rda,
             especialidad: updated.especialidad,
-            sede_id: updated.sede_id,
+            sede_id: updated.sede_id || null,
             materias: updated.materias,
-            horario_id: updated.horario_id,
+            horario_id: updated.horario_id || null,
             activo: updated.activo,
             updated_at: updated.updated_at,
           })
           .eq('id', docente.id);
 
         if (error) {
-          console.warn('Error al actualizar docente en Supabase:', error);
+          setErrorMsg('Error en Supabase: ' + error.message);
+          setIsSaving(false);
+          return;
         }
       } catch (err: any) {
-        console.warn('Excepción al actualizar docente en Supabase:', err);
+        setErrorMsg('Excepción en Supabase: ' + (err.message || err));
+        setIsSaving(false);
+        return;
       }
     }
 
@@ -192,7 +215,8 @@ export const EditTeacherModal: React.FC<EditTeacherModalProps> = ({
                 onChange={(e) => setSedeId(e.target.value)}
                 className="w-full h-11 px-3 rounded-xl border border-slate-300 focus:border-[#00A651] text-sm font-medium bg-white outline-none"
               >
-                {INITIAL_SEDES.map(s => (
+                <option value="">-- Seleccionar Sede --</option>
+                {sedesList.map(s => (
                   <option key={s.id} value={s.id}>
                     {s.nombre}
                   </option>
@@ -209,7 +233,8 @@ export const EditTeacherModal: React.FC<EditTeacherModalProps> = ({
                 onChange={(e) => setHorarioId(e.target.value)}
                 className="w-full h-11 px-3 rounded-xl border border-slate-300 focus:border-[#00A651] text-sm font-medium bg-white outline-none"
               >
-                {INITIAL_HORARIOS.map(h => (
+                <option value="">-- Seleccionar Horario --</option>
+                {horariosList.map(h => (
                   <option key={h.id} value={h.id}>
                     {h.nombre} ({h.hora_ingreso} - {h.hora_salida})
                   </option>

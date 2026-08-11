@@ -37,9 +37,7 @@ export function setLocalDatosInstitucionales(datos: DatosInstitucionales): void 
 }
 
 export async function loadDatosInstitucionales(): Promise<DatosInstitucionales> {
-  const local = getLocalDatosInstitucionales();
-
-  if (isSupabaseConfigured && supabase && checkIsOnline()) {
+  if (isSupabaseConfigured && supabase) {
     try {
       const { data, error } = await supabase
         .from('datos_institucionales')
@@ -49,49 +47,52 @@ export async function loadDatosInstitucionales(): Promise<DatosInstitucionales> 
 
       if (!error && data) {
         const fetched: DatosInstitucionales = {
-          nombre_completo: data.nombre_completo || local.nombre_completo,
-          nombre_corto: data.nombre_corto || local.nombre_corto,
-          nombre_director: data.nombre_director || local.nombre_director,
-          cargo_director: data.cargo_director || local.cargo_director,
-          direccion: data.direccion || local.direccion,
-          telefono: data.telefono || local.telefono,
-          lema_subtitulo: data.lema_subtitulo || local.lema_subtitulo,
+          nombre_completo: data.nombre_completo || DEFAULT_DATOS_INSTITUCIONALES.nombre_completo,
+          nombre_corto: data.nombre_corto || DEFAULT_DATOS_INSTITUCIONALES.nombre_corto,
+          nombre_director: data.nombre_director || DEFAULT_DATOS_INSTITUCIONALES.nombre_director,
+          cargo_director: data.cargo_director || DEFAULT_DATOS_INSTITUCIONALES.cargo_director,
+          direccion: data.direccion || DEFAULT_DATOS_INSTITUCIONALES.direccion,
+          telefono: data.telefono || DEFAULT_DATOS_INSTITUCIONALES.telefono,
+          lema_subtitulo: data.lema_subtitulo || DEFAULT_DATOS_INSTITUCIONALES.lema_subtitulo,
         };
         setLocalDatosInstitucionales(fetched);
         return fetched;
       }
+      if (error) {
+        console.error('Error leyendo datos institucionales desde Supabase:', error);
+      }
     } catch (e) {
-      console.warn('Error leyendo datos institucionales desde Supabase:', e);
+      console.error('Excepción leyendo datos institucionales desde Supabase:', e);
     }
   }
 
-  return local;
+  return getLocalDatosInstitucionales();
 }
 
 export async function saveDatosInstitucionales(datos: DatosInstitucionales): Promise<{ success: boolean; error?: string }> {
-  // Always update local storage first
-  setLocalDatosInstitucionales(datos);
-
-  if (isSupabaseConfigured && supabase && checkIsOnline()) {
+  if (isSupabaseConfigured && supabase) {
     try {
-      // Upsert into Supabase table datos_institucionales
       const { error } = await supabase
         .from('datos_institucionales')
         .upsert({
-          id: '1',
+          id: 'main',
           ...datos,
           updated_at: new Date().toISOString()
         });
 
       if (error) {
-        console.warn('Error guardando en Supabase datos_institucionales:', error);
-        return { success: true, error: 'Guardado localmente. Supabase reportó: ' + error.message };
+        console.error('Error guardando en Supabase datos_institucionales:', error);
+        return { success: false, error: error.message };
       }
+
+      setLocalDatosInstitucionales(datos);
+      return { success: true };
     } catch (e: any) {
-      console.warn('Excepción al guardar datos institucionales en Supabase:', e);
-      return { success: true, error: 'Guardado localmente.' };
+      console.error('Excepción al guardar datos institucionales en Supabase:', e);
+      return { success: false, error: e.message || 'Error de conexión' };
     }
   }
 
+  setLocalDatosInstitucionales(datos);
   return { success: true };
 }

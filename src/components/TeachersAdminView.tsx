@@ -20,7 +20,9 @@ export const TeachersAdminView: React.FC<TeachersAdminViewProps> = ({
   onOpenAddTeacherModal,
   onUpdateCurrentUser
 }) => {
-  const [docentes, setDocentes] = useState<Perfil[]>(MOCK_DOCENTES);
+  const [docentes, setDocentes] = useState<Perfil[]>([]);
+  const [loadingDocentes, setLoadingDocentes] = useState<boolean>(true);
+  const [fetchError, setFetchError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [docFilterStatus, setDocFilterStatus] = useState<'todos' | 'presentados' | 'pendientes'>('todos');
   const [actionMsg, setActionMsg] = useState<string | null>(null);
@@ -30,20 +32,56 @@ export const TeachersAdminView: React.FC<TeachersAdminViewProps> = ({
   const [controlMap, setControlMap] = useState<Record<string, ControlDocumental>>({});
   const [editingControlDocente, setEditingControlDocente] = useState<Perfil | null>(null);
 
+  const fetchDocentes = async () => {
+    if (isSupabaseConfigured && supabase) {
+      setLoadingDocentes(true);
+      setFetchError(null);
+      try {
+        const { data, error } = await supabase
+          .from('perfiles')
+          .select('*, sedes(nombre), horarios(nombre)')
+          .eq('rol', 'docente')
+          .order('nombre_completo', { ascending: true });
+
+        if (error) {
+          setFetchError('Error al obtener docentes de Supabase: ' + error.message);
+        } else if (data) {
+          const mapped: Perfil[] = data.map((d: any) => ({
+            ...d,
+            sede_nombre: d.sedes?.nombre || d.sede_nombre,
+            horario_nombre: d.horarios?.nombre || d.horario_nombre,
+          }));
+          setDocentes(mapped);
+        }
+      } catch (e: any) {
+        setFetchError('Excepción al conectar con Supabase: ' + (e.message || e));
+      } finally {
+        setLoadingDocentes(false);
+      }
+    } else {
+      setDocentes(MOCK_DOCENTES);
+      setLoadingDocentes(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchDocentes();
+  }, []);
+
   useEffect(() => {
     async function loadControls() {
       const localMap = getLocalControlDocumentalMap();
       const updatedMap: Record<string, ControlDocumental> = { ...localMap };
 
       for (const d of docentes) {
-        if (!updatedMap[d.id]) {
-          const c = await getControlDocumentalForDocente(d.id);
-          updatedMap[d.id] = c;
-        }
+        const c = await getControlDocumentalForDocente(d.id);
+        updatedMap[d.id] = c;
       }
       setControlMap(updatedMap);
     }
-    loadControls();
+    if (docentes.length > 0) {
+      loadControls();
+    }
   }, [docentes]);
 
   const handleControlSaveSuccess = (updated: ControlDocumental) => {
@@ -80,31 +118,67 @@ export const TeachersAdminView: React.FC<TeachersAdminViewProps> = ({
   }).length;
   const pendientesCount = totalDocentesCount - presentadosCount;
 
-  const handleToggleActivo = (docenteId: string) => {
-    setDocentes(prev =>
-      prev.map(d => (d.id === docenteId ? { ...d, activo: !d.activo } : d))
-    );
+  const handleToggleActivo = async (docenteId: string) => {
+    const current = docentes.find(d => d.id === docenteId);
+    if (!current) return;
+    const nextActivo = !current.activo;
+
+    if (isSupabaseConfigured && supabase) {
+      const { error } = await supabase
+        .from('perfiles')
+        .update({ activo: nextActivo, updated_at: new Date().toISOString() })
+        .eq('id', docenteId);
+
+      if (error) {
+        setActionMsg('Error en Supabase: ' + error.message);
+        setTimeout(() => setActionMsg(null), 4000);
+        return;
+      }
+      await fetchDocentes();
+    } else {
+      setDocentes(prev => prev.map(d => d.id === docenteId ? { ...d, activo: nextActivo } : d));
+    }
+
     setActionMsg('Estado del docente actualizado correctamente.');
     setTimeout(() => setActionMsg(null), 3000);
   };
 
-  const handleTogglePublicar = (docenteId: string) => {
-    setDocentes(prev =>
-      prev.map(d => (d.id === docenteId ? { ...d, puede_publicar: !d.puede_publicar } : d))
-    );
+  const handleTogglePublicar = async (docenteId: string) => {
+    const current = docentes.find(d => d.id === docenteId);
+    if (!current) return;
+    const nextPublicar = !current.puede_publicar;
+
+    if (isSupabaseConfigured && supabase) {
+      const { error } = await supabase
+        .from('perfiles')
+        .update({ puede_publicar: nextPublicar, updated_at: new Date().toISOString() })
+        .eq('id', docenteId);
+
+      if (error) {
+        setActionMsg('Error en Supabase: ' + error.message);
+        setTimeout(() => setActionMsg(null), 4000);
+        return;
+      }
+      await fetchDocentes();
+    } else {
+      setDocentes(prev => prev.map(d => d.id === docenteId ? { ...d, puede_publicar: nextPublicar } : d));
+    }
+
     setActionMsg('Permiso de publicación actualizado.');
     setTimeout(() => setActionMsg(null), 3000);
   };
 
-  const handleSaveTeacherSuccess = (updatedTeacher: Perfil) => {
-    setDocentes(prev =>
-      prev.map(d => (d.id === updatedTeacher.id ? updatedTeacher : d))
-    );
+  const handleSaveTeacherSuccess = async (updatedTeacher: Perfil) => {
+    if (isSupabaseConfigured && supabase) {
+      await fetchDocentes();
+    } else {
+      setDocentes(prev => prev.map(d => d.id === updatedTeacher.id ? updatedTeacher : d));
+    }
     if (updatedTeacher.id === user.id && onUpdateCurrentUser) {
       onUpdateCurrentUser(updatedTeacher);
     }
     setEditingTeacher(null);
-    setActionMsg('Docente actualizado con éxito.');
+    setActionMsg('Docente actualizado con éxito en Supabase.');
     setTimeout(() => setActionMsg(null), 3000);
   };
 
@@ -130,6 +204,13 @@ export const TeachersAdminView: React.FC<TeachersAdminViewProps> = ({
         <div className="p-3 bg-emerald-100 text-emerald-900 border border-emerald-300 rounded-2xl text-xs font-bold flex items-center gap-2 animate-fade-in">
           <CheckCircle2 className="w-4 h-4 text-[#00A651]" />
           <span>{actionMsg}</span>
+        </div>
+      )}
+
+      {fetchError && (
+        <div className="p-3 bg-rose-50 text-rose-800 border border-rose-200 rounded-2xl text-xs font-bold flex items-center gap-2">
+          <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+          <span>{fetchError}</span>
         </div>
       )}
 

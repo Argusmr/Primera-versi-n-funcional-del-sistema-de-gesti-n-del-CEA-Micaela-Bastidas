@@ -155,6 +155,64 @@ export function saveLocalNiveles(list: NivelEducativo[]): void {
   }
 }
 
+// SUPABASE LOADER FUNCTIONS
+export async function loadProgramasFromSupabase(): Promise<Programa[]> {
+  if (isSupabaseConfigured && supabase) {
+    try {
+      const { data, error } = await supabase
+        .from('programas')
+        .select('*')
+        .order('created_at', { ascending: true });
+
+      if (!error && data && data.length > 0) {
+        saveLocalProgramas(data as Programa[]);
+        return data as Programa[];
+      }
+    } catch (e) {
+      console.warn('Error al obtener programas de Supabase:', e);
+    }
+  }
+  return getLocalProgramas();
+}
+
+export async function loadEtapasFromSupabase(): Promise<Etapa[]> {
+  if (isSupabaseConfigured && supabase) {
+    try {
+      const { data, error } = await supabase
+        .from('etapas')
+        .select('*')
+        .order('created_at', { ascending: true });
+
+      if (!error && data && data.length > 0) {
+        saveLocalEtapas(data as Etapa[]);
+        return data as Etapa[];
+      }
+    } catch (e) {
+      console.warn('Error al obtener etapas de Supabase:', e);
+    }
+  }
+  return getLocalEtapas();
+}
+
+export async function loadNivelesFromSupabase(): Promise<NivelEducativo[]> {
+  if (isSupabaseConfigured && supabase) {
+    try {
+      const { data, error } = await supabase
+        .from('niveles')
+        .select('*')
+        .order('created_at', { ascending: true });
+
+      if (!error && data && data.length > 0) {
+        saveLocalNiveles(data as NivelEducativo[]);
+        return data as NivelEducativo[];
+      }
+    } catch (e) {
+      console.warn('Error al obtener niveles de Supabase:', e);
+    }
+  }
+  return getLocalNiveles();
+}
+
 // ESTUDIANTES
 export function getLocalEstudiantes(): Estudiante[] {
   try {
