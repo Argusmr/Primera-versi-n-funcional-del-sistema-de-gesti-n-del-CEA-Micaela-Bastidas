@@ -43,12 +43,18 @@ export const INITIAL_SEDES: Sede[] = [
     id: 'sede-1',
     nombre: 'Sede Poroma',
     direccion: 'Centro Poblado de Poroma, Municipio de Poroma, Chuquisaca',
+    latitud: -18.539416,
+    longitud: -65.426389,
+    radio_m: 180,
     activo: true,
   },
   {
     id: 'sede-2',
     nombre: 'Sede San Juan de Horcas',
     direccion: 'Comunidad San Juan de Horcas, Municipio de Poroma, Chuquisaca',
+    latitud: -18.601234,
+    longitud: -65.450123,
+    radio_m: 180,
     activo: true,
   },
 ];

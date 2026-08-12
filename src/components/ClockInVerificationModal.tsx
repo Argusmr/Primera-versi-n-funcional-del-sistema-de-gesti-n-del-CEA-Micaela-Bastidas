@@ -53,11 +53,23 @@ export const ClockInVerificationModal: React.FC<ClockInVerificationModalProps> =
       setLoadingGps(true);
       setErrorMessage(null);
 
-      // 1. Fetch Sede info
+      // 1. Fetch Sede info directly from public.sedes in Supabase
       let foundSede: Sede | undefined;
-      if (supabase && isOnline && user.sede_id) {
-        const { data } = await supabase.from('sedes').select('*').eq('id', user.sede_id).single();
-        if (data) foundSede = data as Sede;
+      if (supabase && isOnline) {
+        if (user.sede_id) {
+          const { data } = await supabase.from('sedes').select('*').eq('id', user.sede_id).maybeSingle();
+          if (data) foundSede = data as Sede;
+        }
+
+        if (!foundSede && user.sede_nombre) {
+          const { data } = await supabase.from('sedes').select('*').ilike('nombre', `%${user.sede_nombre.trim()}%`).limit(1);
+          if (data && data.length > 0) foundSede = data[0] as Sede;
+        }
+
+        if (!foundSede) {
+          const { data } = await supabase.from('sedes').select('*').eq('activo', true).order('nombre').limit(1);
+          if (data && data.length > 0) foundSede = data[0] as Sede;
+        }
       }
 
       if (!foundSede) {
@@ -65,21 +77,24 @@ export const ClockInVerificationModal: React.FC<ClockInVerificationModalProps> =
           id: user.sede_id || 'sede-1',
           nombre: user.sede_nombre || 'Sede Poroma',
           direccion: 'Centro Poblado de Poroma',
-          latitud: -19.033333,
-          longitud: -65.262222,
-          radio_m: 150,
+          latitud: -18.539416,
+          longitud: -65.426389,
+          radio_m: 180,
           activo: true
         };
       }
 
-      // Default coordinates if null in DB
-      if (!foundSede.latitud || !foundSede.longitud) {
-        foundSede.latitud = -19.033333;
-        foundSede.longitud = -65.262222;
-      }
-      if (!foundSede.radio_m) {
-        foundSede.radio_m = 150;
-      }
+      // Ensure valid numbers for latitud, longitud, and radio_m
+      const lat = foundSede.latitud !== null && foundSede.latitud !== undefined ? Number(foundSede.latitud) : -18.539416;
+      const lon = foundSede.longitud !== null && foundSede.longitud !== undefined ? Number(foundSede.longitud) : -65.426389;
+      const rad = foundSede.radio_m !== null && foundSede.radio_m !== undefined ? Number(foundSede.radio_m) : 180;
+
+      foundSede = {
+        ...foundSede,
+        latitud: lat,
+        longitud: lon,
+        radio_m: rad
+      };
 
       setSedeInfo(foundSede);
 
@@ -94,12 +109,12 @@ export const ClockInVerificationModal: React.FC<ClockInVerificationModalProps> =
         const dist = calculateDistanceMeters(
           location.latitud,
           location.longitud,
-          foundSede.latitud,
-          foundSede.longitud
+          lat,
+          lon
         );
         setDistanceMeters(dist);
 
-        const allowedRadius = foundSede.radio_m || 150;
+        const allowedRadius = rad;
         if (location.precision > 50) {
           setEstadoGps('gps_impreciso');
         } else if (dist <= allowedRadius) {
@@ -117,22 +132,45 @@ export const ClockInVerificationModal: React.FC<ClockInVerificationModalProps> =
 
   const handleRefreshGps = async () => {
     setLoadingGps(true);
+
+    // Re-verify Sede coordinates from public.sedes if needed
+    let activeSede = sedeInfo;
+    if (supabase && isOnline) {
+      if (user.sede_id) {
+        const { data } = await supabase.from('sedes').select('*').eq('id', user.sede_id).maybeSingle();
+        if (data) activeSede = data as Sede;
+      }
+      if (!activeSede && user.sede_nombre) {
+        const { data } = await supabase.from('sedes').select('*').ilike('nombre', `%${user.sede_nombre.trim()}%`).limit(1);
+        if (data && data.length > 0) activeSede = data[0] as Sede;
+      }
+    }
+
+    const lat = activeSede?.latitud !== null && activeSede?.latitud !== undefined ? Number(activeSede.latitud) : -18.539416;
+    const lon = activeSede?.longitud !== null && activeSede?.longitud !== undefined ? Number(activeSede.longitud) : -65.426389;
+    const rad = activeSede?.radio_m !== null && activeSede?.radio_m !== undefined ? Number(activeSede.radio_m) : 180;
+
+    if (activeSede) {
+      activeSede = { ...activeSede, latitud: lat, longitud: lon, radio_m: rad };
+      setSedeInfo(activeSede);
+    }
+
     const location = await getCurrentGPSPosition();
     setGpsData(location);
 
     if (location.error || location.latitud === 0) {
       setEstadoGps('sin_gps');
       setDistanceMeters(null);
-    } else if (sedeInfo) {
+    } else {
       const dist = calculateDistanceMeters(
         location.latitud,
         location.longitud,
-        sedeInfo.latitud!,
-        sedeInfo.longitud!
+        lat,
+        lon
       );
       setDistanceMeters(dist);
 
-      const allowedRadius = sedeInfo.radio_m || 150;
+      const allowedRadius = rad;
       if (location.precision > 50) {
         setEstadoGps('gps_impreciso');
       } else if (dist <= allowedRadius) {
@@ -361,6 +399,15 @@ export const ClockInVerificationModal: React.FC<ClockInVerificationModalProps> =
                 <strong className="text-slate-900 font-extrabold">{sedeInfo?.nombre || user.sede_nombre}</strong>
               </div>
 
+              {sedeInfo && sedeInfo.latitud !== undefined && sedeInfo.longitud !== undefined && (
+                <div className="flex justify-between items-center text-slate-700">
+                  <span>Coordenadas Sede Usada:</span>
+                  <span className="font-mono text-[11px] font-bold text-slate-700">
+                    {Number(sedeInfo.latitud).toFixed(6)}, {Number(sedeInfo.longitud).toFixed(6)}
+                  </span>
+                </div>
+              )}
+
               {gpsData && !gpsData.error && distanceMeters !== null && (
                 <>
                   <div className="flex justify-between items-center text-slate-700">
@@ -369,7 +416,7 @@ export const ClockInVerificationModal: React.FC<ClockInVerificationModalProps> =
                   </div>
                   <div className="flex justify-between items-center text-slate-700">
                     <span>Radio Permitido:</span>
-                    <span className="font-bold text-slate-600">{sedeInfo?.radio_m || 150} metros</span>
+                    <span className="font-bold text-slate-600">{sedeInfo?.radio_m || 180} metros</span>
                   </div>
                   <div className="flex justify-between items-center text-slate-700">
                     <span>Precisión Satelital GPS:</span>
@@ -391,7 +438,7 @@ export const ClockInVerificationModal: React.FC<ClockInVerificationModalProps> =
                   <div className="p-2.5 bg-amber-50 border-2 border-amber-300 text-amber-950 rounded-xl font-bold flex items-start gap-2">
                     <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
                     <div>
-                      <p>Ubicación fuera del rango permitido ({distanceMeters}m &gt; {sedeInfo?.radio_m || 150}m).</p>
+                      <p>Ubicación fuera del rango permitido ({distanceMeters}m &gt; {sedeInfo?.radio_m || 180}m).</p>
                       <p className="text-[11px] text-amber-800 font-medium mt-0.5">Se requiere registrar una observación de excepción.</p>
                     </div>
                   </div>
