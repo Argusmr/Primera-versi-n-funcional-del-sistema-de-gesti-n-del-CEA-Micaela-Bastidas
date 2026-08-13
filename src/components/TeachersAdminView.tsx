@@ -45,6 +45,7 @@ export const TeachersAdminView: React.FC<TeachersAdminViewProps> = ({
 
         if (error) {
           setFetchError('Error al obtener docentes de Supabase: ' + error.message);
+          setDocentes([]);
         } else if (data) {
           const mapped: Perfil[] = data.map((d: any) => ({
             ...d,
@@ -55,6 +56,7 @@ export const TeachersAdminView: React.FC<TeachersAdminViewProps> = ({
         }
       } catch (e: any) {
         setFetchError('Excepción al conectar con Supabase: ' + (e.message || e));
+        setDocentes([]);
       } finally {
         setLoadingDocentes(false);
       }
@@ -66,6 +68,14 @@ export const TeachersAdminView: React.FC<TeachersAdminViewProps> = ({
 
   useEffect(() => {
     fetchDocentes();
+
+    const handleRefetch = () => {
+      fetchDocentes();
+    };
+    window.addEventListener('docente-added', handleRefetch);
+    return () => {
+      window.removeEventListener('docente-added', handleRefetch);
+    };
   }, []);
 
   useEffect(() => {

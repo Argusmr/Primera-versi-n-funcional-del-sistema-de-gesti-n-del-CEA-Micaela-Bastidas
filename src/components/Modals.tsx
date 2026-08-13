@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { X, UserCheck, Users, Upload, FilePlus, CheckCircle2, AlertCircle } from 'lucide-react';
 import { Perfil, Sede, Horario, Programa, CategoriaPublicacion } from '../types';
 import { INITIAL_SEDES, INITIAL_HORARIOS, INITIAL_PROGRAMAS, INITIAL_GRUPOS } from '../lib/mockData';
+import { supabase, isSupabaseConfigured } from '../lib/supabase';
 
 // 1. ADD TEACHER MODAL
 interface AddTeacherModalProps {
@@ -11,29 +12,106 @@ interface AddTeacherModalProps {
 
 export const AddTeacherModal: React.FC<AddTeacherModalProps> = ({ onClose, onSuccess }) => {
   const [nombre, setNombre] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [ci, setCi] = useState('');
   const [rda, setRda] = useState('');
   const [especialidad, setEspecialidad] = useState('Humanidades & EPJA');
-  const [sedeId, setSedeId] = useState(INITIAL_SEDES[0].id);
-  const [horarioId, setHorarioId] = useState(INITIAL_HORARIOS[0].id);
+  const [sedeId, setSedeId] = useState<string>(INITIAL_SEDES[0].id);
+  const [horarioId, setHorarioId] = useState<string>(INITIAL_HORARIOS[0].id);
+  const [sedesList, setSedesList] = useState<Sede[]>(INITIAL_SEDES);
+  const [horariosList, setHorariosList] = useState<Horario[]>(INITIAL_HORARIOS);
   const [puedePublicar, setPuedePublicar] = useState(false);
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const [errMsg, setErrMsg] = useState<string | null>(null);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  useEffect(() => {
+    async function loadSedesAndHorarios() {
+      if (isSupabaseConfigured && supabase) {
+        try {
+          const { data: sData } = await supabase.from('sedes').select('*').order('nombre');
+          if (sData && sData.length > 0) {
+            setSedesList(sData as Sede[]);
+            setSedeId(sData[0].id);
+          }
+          const { data: hData } = await supabase.from('horarios').select('*').order('nombre');
+          if (hData && hData.length > 0) {
+            setHorariosList(hData as Horario[]);
+            setHorarioId(hData[0].id);
+          }
+        } catch (e) {
+          console.warn('Error loading sedes/horarios from Supabase in AddTeacherModal:', e);
+        }
+      }
+    }
+    loadSedesAndHorarios();
+  }, []);
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
+    setMsg(null);
+    setErrMsg(null);
 
-    setTimeout(() => {
-      setMsg('Docente registrado e incorporado correctamente.');
+    if (!email.trim() || !password.trim() || !nombre.trim() || !rda.trim()) {
+      setErrMsg('Email, contraseña, nombre completo y N° RDA son obligatorios.');
+      setLoading(false);
+      return;
+    }
+
+    if (!isSupabaseConfigured || !supabase) {
+      setErrMsg('Supabase no está configurado. No se puede crear docentes en el sistema.');
+      setLoading(false);
+      return;
+    }
+
+    try {
+      const { data, error } = await supabase.functions.invoke('invitar-docente', {
+        body: {
+          email: email.trim(),
+          password: password.trim(),
+          nombre_completo: nombre.trim(),
+          ci: ci.trim(),
+          ci_exp: ci.trim(),
+          rda: rda.trim(),
+          especialidad: especialidad.trim(),
+          sede_id: sedeId || null,
+          horario_id: horarioId || null,
+          puede_publicar: puedePublicar
+        }
+      });
+
+      if (error) {
+        let responseError = error.message;
+        if (error.context && typeof error.context.json === 'function') {
+          try {
+            const errJson = await error.context.json();
+            if (errJson?.error) responseError = errJson.error;
+          } catch (_) {}
+        }
+        setErrMsg('Error en el servidor Supabase: ' + responseError);
+        setLoading(false);
+        return;
+      }
+
+      if (data?.error) {
+        setErrMsg('Error al registrar docente: ' + data.error);
+        setLoading(false);
+        return;
+      }
+
+      setMsg('Docente registrado e incorporado correctamente en Supabase Auth y perfiles.');
       setLoading(false);
       setTimeout(() => {
         onSuccess();
         onClose();
-      }, 1000);
-    }, 600);
+      }, 1200);
+
+    } catch (err: any) {
+      setErrMsg('Excepción al comunicarse con Supabase: ' + (err.message || err));
+      setLoading(false);
+    }
   };
 
   return (
@@ -50,29 +128,66 @@ export const AddTeacherModal: React.FC<AddTeacherModalProps> = ({ onClose, onSuc
         </div>
 
         {msg && (
-          <div className="p-3 bg-emerald-100 text-emerald-900 rounded-xl text-xs font-bold flex items-center gap-2">
-            <CheckCircle2 className="w-4 h-4 text-[#00A651]" />
+          <div className="p-3 bg-emerald-100 text-emerald-900 border border-emerald-300 rounded-xl text-xs font-bold flex items-center gap-2 animate-fade-in">
+            <CheckCircle2 className="w-4 h-4 text-[#00A651] shrink-0" />
             <span>{msg}</span>
+          </div>
+        )}
+
+        {errMsg && (
+          <div className="p-3 bg-rose-50 text-rose-800 border border-rose-200 rounded-xl text-xs font-bold flex items-center gap-2 animate-fade-in">
+            <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+            <span>{errMsg}</span>
           </div>
         )}
 
         <form onSubmit={handleSubmit} className="space-y-3 text-xs">
           <div>
-            <label className="block font-bold text-slate-700 mb-1">Nombre Completo *</label>
+            <label htmlFor="input-teacher-nombre" className="block font-bold text-slate-700 mb-1">Nombre Completo *</label>
             <input
+              id="input-teacher-nombre"
               type="text"
               value={nombre}
               onChange={e => setNombre(e.target.value)}
               placeholder="Ej. Prof. Carlos Fernando Gutierrez"
-              className="w-full h-11 px-3 border border-slate-300 rounded-xl font-medium outline-none"
+              className="w-full h-11 px-3 border border-slate-300 rounded-xl font-medium outline-none focus:border-[#00A651]"
               required
             />
           </div>
 
           <div className="grid grid-cols-2 gap-2">
             <div>
-              <label className="block font-bold text-slate-700 mb-1">Carnet de Identidad</label>
+              <label htmlFor="input-teacher-email" className="block font-bold text-slate-700 mb-1">Correo de Acceso *</label>
               <input
+                id="input-teacher-email"
+                type="email"
+                value={email}
+                onChange={e => setEmail(e.target.value)}
+                placeholder="docente@ceamicaela.edu.bo"
+                className="w-full h-11 px-3 border border-slate-300 rounded-xl font-medium outline-none focus:border-[#00A651]"
+                required
+              />
+            </div>
+            <div>
+              <label htmlFor="input-teacher-password" className="block font-bold text-slate-700 mb-1">Contraseña Inicial *</label>
+              <input
+                id="input-teacher-password"
+                type="password"
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+                placeholder="Min. 6 caract."
+                className="w-full h-11 px-3 border border-slate-300 rounded-xl font-medium outline-none focus:border-[#00A651]"
+                minLength={6}
+                required
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label htmlFor="input-teacher-ci" className="block font-bold text-slate-700 mb-1">Carnet de Identidad</label>
+              <input
+                id="input-teacher-ci"
                 type="text"
                 value={ci}
                 onChange={e => setCi(e.target.value)}
@@ -81,8 +196,9 @@ export const AddTeacherModal: React.FC<AddTeacherModalProps> = ({ onClose, onSuc
               />
             </div>
             <div>
-              <label className="block font-bold text-slate-700 mb-1">N° RDA *</label>
+              <label htmlFor="input-teacher-rda" className="block font-bold text-slate-700 mb-1">N° RDA *</label>
               <input
+                id="input-teacher-rda"
                 type="text"
                 value={rda}
                 onChange={e => setRda(e.target.value)}
@@ -94,8 +210,9 @@ export const AddTeacherModal: React.FC<AddTeacherModalProps> = ({ onClose, onSuc
           </div>
 
           <div>
-            <label className="block font-bold text-slate-700 mb-1">Especialidad / Nivel</label>
+            <label htmlFor="input-teacher-esp" className="block font-bold text-slate-700 mb-1">Especialidad / Nivel</label>
             <input
+              id="input-teacher-esp"
               type="text"
               value={especialidad}
               onChange={e => setEspecialidad(e.target.value)}
@@ -105,25 +222,27 @@ export const AddTeacherModal: React.FC<AddTeacherModalProps> = ({ onClose, onSuc
 
           <div className="grid grid-cols-2 gap-2">
             <div>
-              <label className="block font-bold text-slate-700 mb-1">Sede Asignada</label>
+              <label htmlFor="input-teacher-sede" className="block font-bold text-slate-700 mb-1">Sede Asignada</label>
               <select
+                id="input-teacher-sede"
                 value={sedeId}
                 onChange={e => setSedeId(e.target.value)}
                 className="w-full h-11 px-3 border border-slate-300 rounded-xl font-bold bg-slate-50"
               >
-                {INITIAL_SEDES.map(s => (
+                {sedesList.map(s => (
                   <option key={s.id} value={s.id}>{s.nombre}</option>
                 ))}
               </select>
             </div>
             <div>
-              <label className="block font-bold text-slate-700 mb-1">Horario Asignado</label>
+              <label htmlFor="input-teacher-horario" className="block font-bold text-slate-700 mb-1">Horario Asignado</label>
               <select
+                id="input-teacher-horario"
                 value={horarioId}
                 onChange={e => setHorarioId(e.target.value)}
                 className="w-full h-11 px-3 border border-slate-300 rounded-xl font-bold bg-slate-50"
               >
-                {INITIAL_HORARIOS.map(h => (
+                {horariosList.map(h => (
                   <option key={h.id} value={h.id}>{h.nombre}</option>
                 ))}
               </select>
@@ -154,9 +273,9 @@ export const AddTeacherModal: React.FC<AddTeacherModalProps> = ({ onClose, onSuc
             <button
               type="submit"
               disabled={loading}
-              className="flex-1 h-12 bg-[#00A651] text-white rounded-xl font-bold"
+              className="flex-1 h-12 bg-[#00A651] text-white rounded-xl font-bold hover:bg-[#008d44] transition-colors"
             >
-              {loading ? 'Guardando...' : 'Crear Docente'}
+              {loading ? 'Creando...' : 'Crear Docente'}
             </button>
           </div>
         </form>

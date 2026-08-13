@@ -296,6 +296,7 @@ export function App() {
           onClose={() => setShowAddTeacherModal(false)}
           onSuccess={() => {
             setShowAddTeacherModal(false);
+            window.dispatchEvent(new Event('docente-added'));
           }}
         />
       )}
