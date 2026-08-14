@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { X, UserCheck, Users, Upload, FilePlus, CheckCircle2, AlertCircle } from 'lucide-react';
 import { Perfil, Sede, Horario, Programa, CategoriaPublicacion } from '../types';
-import { INITIAL_SEDES, INITIAL_HORARIOS, INITIAL_PROGRAMAS, INITIAL_GRUPOS } from '../lib/mockData';
+import { INITIAL_PROGRAMAS, INITIAL_GRUPOS } from '../lib/mockData';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 
 // 1. ADD TEACHER MODAL
@@ -17,10 +17,11 @@ export const AddTeacherModal: React.FC<AddTeacherModalProps> = ({ onClose, onSuc
   const [ci, setCi] = useState('');
   const [rda, setRda] = useState('');
   const [especialidad, setEspecialidad] = useState('Humanidades & EPJA');
-  const [sedeId, setSedeId] = useState<string>(INITIAL_SEDES[0].id);
-  const [horarioId, setHorarioId] = useState<string>(INITIAL_HORARIOS[0].id);
-  const [sedesList, setSedesList] = useState<Sede[]>(INITIAL_SEDES);
-  const [horariosList, setHorariosList] = useState<Horario[]>(INITIAL_HORARIOS);
+  const [sedeId, setSedeId] = useState<string>('');
+  const [horarioId, setHorarioId] = useState<string>('');
+  const [sedesList, setSedesList] = useState<Sede[]>([]);
+  const [horariosList, setHorariosList] = useState<Horario[]>([]);
+  const [loadingCatalogos, setLoadingCatalogos] = useState<boolean>(true);
   const [puedePublicar, setPuedePublicar] = useState(false);
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
@@ -28,23 +29,49 @@ export const AddTeacherModal: React.FC<AddTeacherModalProps> = ({ onClose, onSuc
 
   useEffect(() => {
     async function loadSedesAndHorarios() {
-      if (isSupabaseConfigured && supabase) {
-        try {
-          const { data: sData } = await supabase.from('sedes').select('*').order('nombre');
-          if (sData && sData.length > 0) {
-            setSedesList(sData as Sede[]);
-            setSedeId(sData[0].id);
-          }
-          const { data: hData } = await supabase.from('horarios').select('*').order('nombre');
-          if (hData && hData.length > 0) {
-            setHorariosList(hData as Horario[]);
-            setHorarioId(hData[0].id);
-          }
-        } catch (e) {
-          console.warn('Error loading sedes/horarios from Supabase in AddTeacherModal:', e);
+      if (!isSupabaseConfigured || !supabase) {
+        setErrMsg('Supabase no está configurado. No se pueden cargar sedes ni horarios.');
+        setLoadingCatalogos(false);
+        return;
+      }
+
+      setLoadingCatalogos(true);
+      try {
+        const [sedesRes, horariosRes] = await Promise.all([
+          supabase.from('sedes').select('*').order('nombre'),
+          supabase.from('horarios').select('*').order('nombre')
+        ]);
+
+        if (sedesRes.error) {
+          throw new Error('Error al cargar sedes desde Supabase: ' + sedesRes.error.message);
         }
+        if (horariosRes.error) {
+          throw new Error('Error al cargar horarios desde Supabase: ' + horariosRes.error.message);
+        }
+
+        const sData = (sedesRes.data || []) as Sede[];
+        const hData = (horariosRes.data || []) as Horario[];
+
+        if (sData.length === 0) {
+          throw new Error('No se encontraron sedes configuradas en la base de datos.');
+        }
+        if (hData.length === 0) {
+          throw new Error('No se encontraron horarios configurados en la base de datos.');
+        }
+
+        setSedesList(sData);
+        setSedeId(sData[0].id);
+
+        setHorariosList(hData);
+        setHorarioId(hData[0].id);
+      } catch (e: any) {
+        console.error('Error al cargar sedes/horarios desde Supabase:', e);
+        setErrMsg(e.message || 'Error al conectar con Supabase para cargar sedes y horarios.');
+      } finally {
+        setLoadingCatalogos(false);
       }
     }
+
     loadSedesAndHorarios();
   }, []);
 
@@ -56,6 +83,12 @@ export const AddTeacherModal: React.FC<AddTeacherModalProps> = ({ onClose, onSuc
 
     if (!email.trim() || !password.trim() || !nombre.trim() || !rda.trim()) {
       setErrMsg('Email, contraseña, nombre completo y N° RDA son obligatorios.');
+      setLoading(false);
+      return;
+    }
+
+    if (!sedeId || !horarioId) {
+      setErrMsg('Debe seleccionar una sede y un horario válidos de la base de datos.');
       setLoading(false);
       return;
     }
@@ -236,29 +269,41 @@ export const AddTeacherModal: React.FC<AddTeacherModalProps> = ({ onClose, onSuc
 
           <div className="grid grid-cols-2 gap-2">
             <div>
-              <label htmlFor="input-teacher-sede" className="block font-bold text-slate-700 mb-1">Sede Asignada</label>
+              <label htmlFor="input-teacher-sede" className="block font-bold text-slate-700 mb-1">Sede Asignada *</label>
               <select
                 id="input-teacher-sede"
                 value={sedeId}
                 onChange={e => setSedeId(e.target.value)}
-                className="w-full h-11 px-3 border border-slate-300 rounded-xl font-bold bg-slate-50"
+                disabled={loadingCatalogos || sedesList.length === 0}
+                className="w-full h-11 px-3 border border-slate-300 rounded-xl font-bold bg-slate-50 disabled:opacity-60"
+                required
               >
-                {sedesList.map(s => (
-                  <option key={s.id} value={s.id}>{s.nombre}</option>
-                ))}
+                {sedesList.length === 0 ? (
+                  <option value="">{loadingCatalogos ? 'Cargando sedes...' : 'Sin sedes disponibles'}</option>
+                ) : (
+                  sedesList.map(s => (
+                    <option key={s.id} value={s.id}>{s.nombre}</option>
+                  ))
+                )}
               </select>
             </div>
             <div>
-              <label htmlFor="input-teacher-horario" className="block font-bold text-slate-700 mb-1">Horario Asignado</label>
+              <label htmlFor="input-teacher-horario" className="block font-bold text-slate-700 mb-1">Horario Asignado *</label>
               <select
                 id="input-teacher-horario"
                 value={horarioId}
                 onChange={e => setHorarioId(e.target.value)}
-                className="w-full h-11 px-3 border border-slate-300 rounded-xl font-bold bg-slate-50"
+                disabled={loadingCatalogos || horariosList.length === 0}
+                className="w-full h-11 px-3 border border-slate-300 rounded-xl font-bold bg-slate-50 disabled:opacity-60"
+                required
               >
-                {horariosList.map(h => (
-                  <option key={h.id} value={h.id}>{h.nombre}</option>
-                ))}
+                {horariosList.length === 0 ? (
+                  <option value="">{loadingCatalogos ? 'Cargando horarios...' : 'Sin horarios disponibles'}</option>
+                ) : (
+                  horariosList.map(h => (
+                    <option key={h.id} value={h.id}>{h.nombre}</option>
+                  ))
+                )}
               </select>
             </div>
           </div>
@@ -286,8 +331,8 @@ export const AddTeacherModal: React.FC<AddTeacherModalProps> = ({ onClose, onSuc
             </button>
             <button
               type="submit"
-              disabled={loading}
-              className="flex-1 h-12 bg-[#00A651] text-white rounded-xl font-bold hover:bg-[#008d44] transition-colors"
+              disabled={loading || loadingCatalogos || !sedeId || !horarioId || sedesList.length === 0 || horariosList.length === 0}
+              className="flex-1 h-12 bg-[#00A651] text-white rounded-xl font-bold hover:bg-[#008d44] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {loading ? 'Creando...' : 'Crear Docente'}
             </button>
