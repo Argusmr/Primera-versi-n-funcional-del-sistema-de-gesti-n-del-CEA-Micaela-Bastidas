@@ -67,7 +67,21 @@ export const AddTeacherModal: React.FC<AddTeacherModalProps> = ({ onClose, onSuc
     }
 
     try {
+      // 1. Validate active session and access token
+      const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+      const session = sessionData?.session;
+
+      if (sessionError || !session || !session.access_token) {
+        setErrMsg('Sesión expirada. Vuelva a iniciar sesión.');
+        setLoading(false);
+        return;
+      }
+
+      // 2. Invoke edge function with explicit Authorization header containing user JWT
       const { data, error } = await supabase.functions.invoke('invitar-docente', {
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+        },
         body: {
           email: email.trim(),
           password: password.trim(),
