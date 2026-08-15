@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { X, UserCheck, Users, Upload, FilePlus, CheckCircle2, AlertCircle } from 'lucide-react';
-import { Perfil, Sede, Horario, Programa, CategoriaPublicacion } from '../types';
-import { INITIAL_PROGRAMAS, INITIAL_GRUPOS } from '../lib/mockData';
+import { Perfil, Sede, Horario, Programa, CategoriaPublicacion, Grupo } from '../types';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 
 // 1. ADD TEACHER MODAL
@@ -350,16 +349,142 @@ export const AddStudentModal: React.FC<{ onClose: () => void; onSuccess: () => v
 }) => {
   const [nombre, setNombre] = useState('');
   const [documento, setDocumento] = useState('');
-  const [grupoId, setGrupoId] = useState(INITIAL_GRUPOS[0].id);
-  const [carrera, setCarrera] = useState('Humanidades / Agropecuaria');
-  const [nivel, setNivel] = useState('Avanzado');
+  const [grupoId, setGrupoId] = useState('');
+  const [gruposList, setGruposList] = useState<Grupo[]>([]);
+  const [loadingCatalogos, setLoadingCatalogos] = useState<boolean>(true);
   const [isCsvImport, setIsCsvImport] = useState(false);
   const [csvFileName, setCsvFileName] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [errMsg, setErrMsg] = useState<string | null>(null);
 
-  const handleSave = (e: React.FormEvent) => {
+  useEffect(() => {
+    async function loadAcademicGroups() {
+      if (!isSupabaseConfigured || !supabase) {
+        setErrMsg('Supabase no está configurado. No se pueden cargar los grupos ni la estructura académica.');
+        setLoadingCatalogos(false);
+        return;
+      }
+
+      setLoadingCatalogos(true);
+      setErrMsg(null);
+      try {
+        // Consultar tablas académicas de Supabase
+        const [progRes, subprogRes, carrRes, nivRes, grupRes] = await Promise.all([
+          supabase.from('programas').select('*').order('codigo'),
+          supabase.from('subprogramas').select('*').order('codigo'),
+          supabase.from('carreras').select('*').order('nombre'),
+          supabase.from('niveles').select('*').order('orden'),
+          supabase.from('grupos').select('*, sedes(nombre), programas(codigo, nombre)').order('nombre')
+        ]);
+
+        const programasData = (progRes.data || []) as Programa[];
+        const subprogramasData = subprogRes.data || [];
+        const carrerasData = carrRes.data || [];
+        const nivelesData = nivRes.data || [];
+        const gruposData = grupRes.data || [];
+
+        // Validar si existen datos en las tablas académicas
+        const missingParts: string[] = [];
+        if (programasData.length === 0) missingParts.push('Programas (EPJA, EDUPER, CEE)');
+        if (subprogramasData.length === 0) missingParts.push('Subprogramas (EPA, ESA, ETA)');
+        if (carrerasData.length === 0) missingParts.push('Carreras (Sistemas Informáticos, Gastronomía, etc.)');
+        if (nivelesData.length === 0) missingParts.push('Niveles académicos');
+        if (gruposData.length === 0) missingParts.push('Grupos académicos');
+
+        if (gruposData.length === 0) {
+          const detalleFaltante = missingParts.length > 0
+            ? `Faltan registros en la base de datos de Supabase: ${missingParts.join(', ')}.`
+            : 'No se encontraron grupos activos configurados en Supabase.';
+          setErrMsg(`Sin grupos disponibles. ${detalleFaltante}`);
+          setGruposList([]);
+          setGrupoId('');
+        } else {
+          const mapped: Grupo[] = gruposData.map((g: any) => ({
+            id: g.id,
+            nombre: g.nombre,
+            sede_id: g.sede_id,
+            programa_id: g.programa_id,
+            carrera_especialidad: g.carrera_especialidad,
+            nivel: g.nivel,
+            activo: g.activo ?? true,
+            created_at: g.created_at,
+            sede_nombre: g.sedes?.nombre || undefined,
+            programa_nombre: g.programas?.nombre || g.programas?.codigo || undefined
+          }));
+
+          setGruposList(mapped);
+          setGrupoId(mapped[0]?.id || '');
+        }
+      } catch (e: any) {
+        console.error('Error al cargar estructura académica y grupos desde Supabase:', e);
+        setErrMsg(e.message || 'Error al conectar con Supabase para cargar los grupos.');
+      } finally {
+        setLoadingCatalogos(false);
+      }
+    }
+
+    loadAcademicGroups();
+  }, []);
+
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    onSuccess();
-    onClose();
+    setErrMsg(null);
+    setMsg(null);
+
+    if (!nombre.trim()) {
+      setErrMsg('El nombre completo es obligatorio.');
+      return;
+    }
+
+    if (!grupoId) {
+      setErrMsg('Debe seleccionar un grupo asignado válido de la base de datos.');
+      return;
+    }
+
+    const selectedGroup = gruposList.find(g => g.id === grupoId);
+    if (!selectedGroup) {
+      setErrMsg('El grupo seleccionado no es válido.');
+      return;
+    }
+
+    if (!isSupabaseConfigured || !supabase) {
+      setErrMsg('Supabase no está configurado. No se puede registrar al estudiante.');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const codigoInterno = `EST-${Date.now().toString().slice(-6)}`;
+      const { error: insertErr } = await supabase
+        .from('estudiantes')
+        .insert({
+          codigo_interno: codigoInterno,
+          nombre_completo: nombre.trim(),
+          documento: documento.trim() || null,
+          programa_id: selectedGroup.programa_id,
+          sede_id: selectedGroup.sede_id,
+          carrera_especialidad: selectedGroup.carrera_especialidad || 'General',
+          nivel: selectedGroup.nivel || 'General',
+          grupo_id: selectedGroup.id,
+          estado: 'activo'
+        });
+
+      if (insertErr) {
+        throw new Error('Error al registrar estudiante en Supabase: ' + insertErr.message);
+      }
+
+      setMsg('Estudiante registrado exitosamente.');
+      setTimeout(() => {
+        onSuccess();
+        onClose();
+      }, 1000);
+    } catch (err: any) {
+      console.error('Error en creación de estudiante:', err);
+      setErrMsg(err.message || 'Error al registrar al estudiante.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleCsvFile = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -380,6 +505,20 @@ export const AddStudentModal: React.FC<{ onClose: () => void; onSuccess: () => v
             <X className="w-6 h-6" />
           </button>
         </div>
+
+        {/* Feedback alerts */}
+        {msg && (
+          <div className="p-3 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-xs flex items-center gap-2">
+            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+            <span>{msg}</span>
+          </div>
+        )}
+        {errMsg && (
+          <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded-xl text-xs flex items-start gap-2">
+            <AlertCircle className="w-4 h-4 text-red-500 shrink-0 mt-0.5" />
+            <span>{errMsg}</span>
+          </div>
+        )}
 
         {/* Tab switcher: Individual vs CSV */}
         <div className="flex bg-slate-100 p-1 rounded-xl text-xs font-bold">
@@ -402,8 +541,9 @@ export const AddStudentModal: React.FC<{ onClose: () => void; onSuccess: () => v
         {!isCsvImport ? (
           <form onSubmit={handleSave} className="space-y-3 text-xs">
             <div>
-              <label className="block font-bold text-slate-700 mb-1">Nombre Completo *</label>
+              <label htmlFor="input-student-nombre" className="block font-bold text-slate-700 mb-1">Nombre Completo *</label>
               <input
+                id="input-student-nombre"
                 type="text"
                 value={nombre}
                 onChange={e => setNombre(e.target.value)}
@@ -413,10 +553,11 @@ export const AddStudentModal: React.FC<{ onClose: () => void; onSuccess: () => v
               />
             </div>
 
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <div>
-                <label className="block font-bold text-slate-700 mb-1">CI / Documento</label>
+                <label htmlFor="input-student-documento" className="block font-bold text-slate-700 mb-1">CI / Documento</label>
                 <input
+                  id="input-student-documento"
                   type="text"
                   value={documento}
                   onChange={e => setDocumento(e.target.value)}
@@ -425,25 +566,43 @@ export const AddStudentModal: React.FC<{ onClose: () => void; onSuccess: () => v
                 />
               </div>
               <div>
-                <label className="block font-bold text-slate-700 mb-1">Grupo Asignado</label>
+                <label htmlFor="select-student-grupo" className="block font-bold text-slate-700 mb-1">Grupo Asignado *</label>
                 <select
+                  id="select-student-grupo"
                   value={grupoId}
                   onChange={e => setGrupoId(e.target.value)}
-                  className="w-full h-11 px-3 border border-slate-300 rounded-xl font-bold bg-slate-50"
+                  disabled={loadingCatalogos || gruposList.length === 0}
+                  className="w-full h-11 px-3 border border-slate-300 rounded-xl font-bold bg-slate-50 disabled:opacity-60"
+                  required
                 >
-                  {INITIAL_GRUPOS.map(g => (
-                    <option key={g.id} value={g.id}>{g.nombre}</option>
-                  ))}
+                  {gruposList.length === 0 ? (
+                    <option value="">{loadingCatalogos ? 'Cargando grupos...' : 'Sin grupos disponibles'}</option>
+                  ) : (
+                    gruposList.map(g => (
+                      <option key={g.id} value={g.id}>
+                        {g.nombre} {g.sede_nombre ? `(${g.sede_nombre})` : ''}
+                      </option>
+                    ))
+                  )}
                 </select>
               </div>
             </div>
 
             <div className="flex gap-2 pt-2">
-              <button type="button" onClick={onClose} className="flex-1 h-12 border border-slate-300 rounded-xl font-bold text-slate-600">
+              <button
+                type="button"
+                onClick={onClose}
+                disabled={loading}
+                className="flex-1 h-12 border border-slate-300 rounded-xl font-bold text-slate-600 hover:bg-slate-50 transition-colors"
+              >
                 Cancelar
               </button>
-              <button type="submit" className="flex-1 h-12 bg-[#00A651] text-white rounded-xl font-bold">
-                Guardar Estudiante
+              <button
+                type="submit"
+                disabled={loading || loadingCatalogos || !grupoId || gruposList.length === 0}
+                className="flex-1 h-12 bg-[#00A651] text-white rounded-xl font-bold hover:bg-[#008d44] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {loading ? 'Guardando...' : 'Guardar Estudiante'}
               </button>
             </div>
           </form>
@@ -463,7 +622,7 @@ export const AddStudentModal: React.FC<{ onClose: () => void; onSuccess: () => v
               <button type="button" onClick={onClose} className="flex-1 h-12 border border-slate-300 rounded-xl font-bold text-slate-600">
                 Cancelar
               </button>
-              <button type="submit" disabled={!csvFileName} className="flex-1 h-12 bg-[#00A651] text-white rounded-xl font-bold disabled:opacity-50">
+              <button type="submit" disabled={!csvFileName || loading} className="flex-1 h-12 bg-[#00A651] text-white rounded-xl font-bold disabled:opacity-50">
                 Importar Estudiantes
               </button>
             </div>
