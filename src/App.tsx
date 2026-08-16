@@ -306,6 +306,7 @@ export function App() {
           onClose={() => setShowAddStudentModal(false)}
           onSuccess={() => {
             setShowAddStudentModal(false);
+            window.dispatchEvent(new Event('estudiante-added'));
           }}
         />
       )}

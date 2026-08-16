@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Users,
   UserCheck,
@@ -18,6 +18,7 @@ import { Perfil, Estudiante, Grupo, AsistenciaEstudiante } from '../types';
 import { MOCK_ESTUDIANTES, INITIAL_GRUPOS } from '../lib/mockData';
 import { saveOfflineEstudianteAsistencia } from '../lib/db';
 import { downloadStudentEnrollmentReport } from '../lib/excelExport';
+import { supabase, isSupabaseConfigured } from '../lib/supabase';
 
 interface StudentsViewProps {
   user: Perfil;
@@ -52,12 +53,108 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
   // Student Search
   const [searchTerm, setSearchTerm] = useState<string>('');
 
-  // Students list filtered by group and search
+  // Nomina Real State from Supabase
+  const [nominaStudents, setNominaStudents] = useState<Estudiante[]>([]);
+  const [loadingNomina, setLoadingNomina] = useState<boolean>(false);
+  const [nominaError, setNominaError] = useState<string | null>(null);
+
+  const fetchNomina = async () => {
+    if (!isSupabaseConfigured || !supabase) {
+      setNominaError('Supabase no está configurado.');
+      setNominaStudents([]);
+      return;
+    }
+
+    setLoadingNomina(true);
+    setNominaError(null);
+    try {
+      const { data, error } = await supabase
+        .from('estudiantes')
+        .select(`
+          id,
+          codigo_interno,
+          nombre_completo,
+          documento,
+          programa_id,
+          sede_id,
+          carrera_especialidad,
+          nivel,
+          grupo_id,
+          estado,
+          fecha_inscripcion,
+          grupos (
+            id,
+            nombre
+          ),
+          sedes (
+            id,
+            nombre
+          )
+        `)
+        .order('nombre_completo', { ascending: true });
+
+      if (error) {
+        throw error;
+      }
+
+      const mapped: Estudiante[] = (data || []).map((st: any) => ({
+        id: st.id,
+        codigo_interno: st.codigo_interno || `EST-${st.id.slice(0, 6)}`,
+        nombre_completo: st.nombre_completo,
+        documento: st.documento || undefined,
+        fecha_inscripcion: st.fecha_inscripcion || new Date().toISOString().slice(0, 10),
+        programa_id: st.programa_id,
+        sede_id: st.sede_id,
+        carrera_especialidad: st.carrera_especialidad,
+        nivel: st.nivel,
+        grupo_id: st.grupo_id,
+        estado: st.estado || 'activo',
+        grupo_nombre: st.grupos?.nombre || undefined,
+        sede_nombre: st.sedes?.nombre || undefined,
+        programa_nombre: st.carrera_especialidad || 'EPJA'
+      }));
+
+      setNominaStudents(mapped);
+    } catch (err: any) {
+      console.error('Error al cargar la nómina de estudiantes desde Supabase:', err);
+      setNominaError(err.message || 'Error al consultar nómina en Supabase.');
+      setNominaStudents([]);
+    } finally {
+      setLoadingNomina(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeSubTab === 'nomina') {
+      fetchNomina();
+    }
+  }, [activeSubTab]);
+
+  useEffect(() => {
+    const handleStudentAdded = () => {
+      fetchNomina();
+    };
+    window.addEventListener('estudiante-added', handleStudentAdded);
+    return () => {
+      window.removeEventListener('estudiante-added', handleStudentAdded);
+    };
+  }, []);
+
+  // Attendance tab students list filtered by group and search
   const filteredStudents = MOCK_ESTUDIANTES.filter((e) => {
-    const matchGroup = activeSubTab === 'asistencia' ? e.grupo_id === selectedGrupoId : true;
+    const matchGroup = e.grupo_id === selectedGrupoId;
     const matchSearch = e.nombre_completo.toLowerCase().includes(searchTerm.toLowerCase()) ||
                         e.codigo_interno.toLowerCase().includes(searchTerm.toLowerCase());
     return matchGroup && matchSearch;
+  });
+
+  // Nomina tab filtered real students
+  const filteredNominaStudents = nominaStudents.filter((e) => {
+    const term = searchTerm.toLowerCase();
+    const matchName = e.nombre_completo.toLowerCase().includes(term);
+    const matchCode = e.codigo_interno ? e.codigo_interno.toLowerCase().includes(term) : false;
+    const matchDoc = e.documento ? e.documento.toLowerCase().includes(term) : false;
+    return matchName || matchCode || matchDoc;
   });
 
   const handleMarkAllPresent = () => {
@@ -106,7 +203,9 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
   };
 
   const handleExportNomina = () => {
-    downloadStudentEnrollmentReport(MOCK_ESTUDIANTES);
+    if (nominaStudents.length > 0) {
+      downloadStudentEnrollmentReport(nominaStudents);
+    }
   };
 
   return (
@@ -311,7 +410,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
             {user.rol === 'superadmin' && (
               <button
                 onClick={onOpenAddStudentModal}
-                className="h-11 px-3 bg-[#00A651] text-white font-bold text-xs rounded-2xl flex items-center gap-1 shrink-0"
+                className="h-11 px-3 bg-[#00A651] text-white font-bold text-xs rounded-2xl flex items-center gap-1 shrink-0 hover:bg-[#008d44] transition-colors"
               >
                 <Plus className="w-4 h-4" />
                 <span>Añadir</span>
@@ -320,49 +419,86 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
 
             <button
               onClick={handleExportNomina}
-              className="h-11 px-3 bg-slate-800 text-white font-bold text-xs rounded-2xl flex items-center gap-1 shrink-0"
+              disabled={nominaStudents.length === 0}
+              className="h-11 px-3 bg-slate-800 text-white font-bold text-xs rounded-2xl flex items-center gap-1 shrink-0 hover:bg-slate-700 transition-colors disabled:opacity-50"
             >
               <FileSpreadsheet className="w-4 h-4 text-[#FFC845]" />
               <span>Excel</span>
             </button>
           </div>
 
-          {/* Roster Cards */}
-          <div className="space-y-3">
-            {filteredStudents.map((s) => (
-              <div key={s.id} className="p-4 bg-white rounded-3xl border border-slate-200 shadow-xs space-y-2">
-                <div className="flex items-start justify-between">
-                  <div>
-                    <span className="text-[10px] font-bold text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
-                      {s.codigo_interno}
-                    </span>
-                    <h4 className="font-extrabold text-base text-[#17324D] mt-1">{s.nombre_completo}</h4>
-                    <p className="text-xs text-slate-500 font-medium">
-                      CI: {s.documento || 'N/D'} • Inscrito: {s.fecha_inscripcion}
-                    </p>
-                  </div>
-                  <span
-                    className={`px-3 py-1 rounded-full font-bold text-[10px] uppercase ${
-                      s.estado === 'activo'
-                        ? 'bg-emerald-100 text-emerald-800'
-                        : 'bg-red-100 text-red-800'
-                    }`}
-                  >
-                    {s.estado}
-                  </span>
-                </div>
-
-                <div className="pt-2 border-t border-slate-100 text-xs text-slate-600 grid grid-cols-2 gap-1 font-medium">
-                  <div>Sede: <strong className="text-slate-900">{s.sede_nombre}</strong></div>
-                  <div>Programa: <strong className="text-slate-900">{s.programa_nombre}</strong></div>
-                  <div>Grupo: <strong className="text-slate-900">{s.grupo_nombre}</strong></div>
-                  <div>Nivel: <strong className="text-slate-900">{s.nivel}</strong></div>
-                </div>
+          {/* Error Message */}
+          {nominaError && (
+            <div className="p-4 bg-red-50 border border-red-200 text-red-700 rounded-3xl text-xs space-y-2">
+              <div className="flex items-center gap-2 font-bold">
+                <AlertCircle className="w-4 h-4 text-red-500 shrink-0" />
+                <span>Error al obtener nómina: {nominaError}</span>
               </div>
-            ))}
-          </div>
+              <button
+                type="button"
+                onClick={fetchNomina}
+                className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl text-[11px] transition-colors"
+              >
+                Reintentar
+              </button>
+            </div>
+          )}
+
+          {/* Loading state */}
+          {loadingNomina && (
+            <div className="p-8 text-center bg-white rounded-3xl border border-slate-200 text-slate-500 font-bold text-xs space-y-2">
+              <div className="inline-block animate-spin w-5 h-5 border-2 border-emerald-600 border-t-transparent rounded-full" />
+              <p>Cargando nómina de estudiantes desde Supabase...</p>
+            </div>
+          )}
+
+          {/* Empty state */}
+          {!loadingNomina && !nominaError && filteredNominaStudents.length === 0 && (
+            <div className="p-8 text-center bg-white rounded-3xl border border-slate-200 text-slate-500 font-bold text-xs space-y-2">
+              <Users className="w-8 h-8 text-slate-300 mx-auto" />
+              <p>{searchTerm ? 'No se encontraron estudiantes que coincidan con la búsqueda.' : 'No hay estudiantes registrados.'}</p>
+            </div>
+          )}
+
+          {/* Roster Cards */}
+          {!loadingNomina && !nominaError && filteredNominaStudents.length > 0 && (
+            <div className="space-y-3">
+              {filteredNominaStudents.map((s) => (
+                <div key={s.id} className="p-4 bg-white rounded-3xl border border-slate-200 shadow-xs space-y-2">
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <span className="text-[10px] font-bold text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                        {s.codigo_interno}
+                      </span>
+                      <h4 className="font-extrabold text-base text-[#17324D] mt-1">{s.nombre_completo}</h4>
+                      <p className="text-xs text-slate-500 font-medium">
+                        CI: {s.documento || 'N/D'} • Inscrito: {s.fecha_inscripcion}
+                      </p>
+                    </div>
+                    <span
+                      className={`px-3 py-1 rounded-full font-bold text-[10px] uppercase ${
+                        s.estado === 'activo'
+                          ? 'bg-emerald-100 text-emerald-800'
+                          : 'bg-red-100 text-red-800'
+                      }`}
+                    >
+                      {s.estado}
+                    </span>
+                  </div>
+
+                  <div className="pt-2 border-t border-slate-100 text-xs text-slate-600 grid grid-cols-2 gap-1 font-medium">
+                    <div>Sede: <strong className="text-slate-900">{s.sede_nombre || 'N/D'}</strong></div>
+                    <div>Programa: <strong className="text-slate-900">{s.programa_nombre || s.carrera_especialidad || 'EPJA'}</strong></div>
+                    <div>Grupo: <strong className="text-slate-900">{s.grupo_nombre || 'N/D'}</strong></div>
+                    <div>Nivel: <strong className="text-slate-900">{s.nivel || 'N/D'}</strong></div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>
   );
 };
+

@@ -475,6 +475,7 @@ export const AddStudentModal: React.FC<{ onClose: () => void; onSuccess: () => v
       }
 
       setMsg('Estudiante registrado exitosamente.');
+      window.dispatchEvent(new Event('estudiante-added'));
       setTimeout(() => {
         onSuccess();
         onClose();
