@@ -546,6 +546,15 @@ CREATE POLICY "Lectura autenticada de sedes" ON public.sedes FOR SELECT USING (a
 CREATE POLICY "Lectura autenticada de horarios" ON public.horarios FOR SELECT USING (auth.uid() IS NOT NULL);
 CREATE POLICY "Lectura autenticada de grupos" ON public.grupos FOR SELECT USING (auth.uid() IS NOT NULL);
 
+-- Politicas: Asignaciones Docentes
+CREATE POLICY "Superadmin gestiona asignaciones docentes" ON public.asignaciones_docentes
+  FOR ALL USING (
+    public.es_superadmin()
+  );
+
+CREATE POLICY "Docente ve sus propias asignaciones" ON public.asignaciones_docentes
+  FOR SELECT USING (docente_id = auth.uid());
+
 -- Politica: Asistencias Docentes
 CREATE POLICY "Superadmin ve todas las asistencias docentes" ON public.asistencias_docentes
   FOR ALL USING (

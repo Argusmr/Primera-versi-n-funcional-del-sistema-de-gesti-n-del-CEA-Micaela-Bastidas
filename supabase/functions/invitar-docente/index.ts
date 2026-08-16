@@ -87,6 +87,7 @@ serve(async (req) => {
       programa_id,
       horario_id,
       puede_publicar,
+      grupo_ids, // array of UUIDs (string[])
     } = body;
 
     if (!email || !password || !nombre_completo) {
@@ -137,7 +138,7 @@ serve(async (req) => {
       horario_id: horario_id || null,
       rol: "docente",
       activo: true,
-      puede_publicar: puede_publicar === true,
+      puede_publicar: puedePublicar === true,
       updated_at: new Date().toISOString(),
     };
 
@@ -166,11 +167,72 @@ serve(async (req) => {
       );
     }
 
+    // 3. Create independent rows in public.asignaciones_docentes for each selected group
+    let createdAsignaciones: any[] = [];
+    if (Array.isArray(grupo_ids) && grupo_ids.length > 0) {
+      // Fetch details of selected groups to extract carrera_especialidad or nombre for 'materia' column
+      const { data: gruposData, error: gruposFetchError } = await adminClient
+        .from("grupos")
+        .select("id, nombre, carrera_especialidad, nivel")
+        .in("id", grupo_ids);
+
+      if (gruposFetchError) {
+        return new Response(
+          JSON.stringify({
+            error: `El usuario y perfil fueron creados con éxito (Docente ID: ${newUser.user.id}), pero ocurrió un error al consultar los grupos seleccionados: ${gruposFetchError.message}. Debe asignar los grupos manualmente.`,
+            user: newUser.user,
+            profile: newProfile,
+            asignaciones_error: gruposFetchError.message,
+          }),
+          {
+            status: 500,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          }
+        );
+      }
+
+      const gruposMap = new Map((gruposData || []).map((g: any) => [g.id, g]));
+
+      const asignacionesPayload = grupo_ids.map((gid: string) => {
+        const gInfo = gruposMap.get(gid);
+        // Column 'materia' is NOT NULL in public.asignaciones_docentes schema
+        const materiaVal = gInfo?.carrera_especialidad || gInfo?.nombre || especialidad || 'Docencia General';
+        return {
+          docente_id: newUser.user.id,
+          grupo_id: gid,
+          materia: materiaVal,
+        };
+      });
+
+      const { data: asigData, error: asigInsertError } = await adminClient
+        .from("asignaciones_docentes")
+        .insert(asignacionesPayload)
+        .select();
+
+      if (asigInsertError) {
+        return new Response(
+          JSON.stringify({
+            error: `El usuario y perfil fueron creados con éxito (Docente ID: ${newUser.user.id}), pero falló la asignación de los grupos en public.asignaciones_docentes: ${asigInsertError.message}.`,
+            user: newUser.user,
+            profile: newProfile,
+            asignaciones_error: asigInsertError.message,
+          }),
+          {
+            status: 500,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          }
+        );
+      }
+
+      createdAsignaciones = asigData || [];
+    }
+
     return new Response(
       JSON.stringify({
-        message: "Docente registrado con éxito en Auth y perfiles",
+        message: "Docente registrado con éxito en Auth, perfiles y asignaciones de grupos",
         user: newUser.user,
         profile: newProfile,
+        asignaciones: createdAsignaciones,
       }),
       {
         status: 200,
