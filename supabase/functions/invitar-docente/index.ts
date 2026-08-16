@@ -138,7 +138,7 @@ serve(async (req) => {
       horario_id: horario_id || null,
       rol: "docente",
       activo: true,
-      puede_publicar: puedePublicar === true,
+      puede_publicar: Boolean(puede_publicar),
       updated_at: new Date().toISOString(),
     };
 
