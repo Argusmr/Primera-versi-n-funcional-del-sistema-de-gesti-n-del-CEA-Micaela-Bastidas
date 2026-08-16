@@ -53,6 +53,8 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
   
   const [attendanceSaved, setAttendanceSaved] = useState<boolean>(false);
   const [savedGroupPercent, setSavedGroupPercent] = useState<number | null>(null);
+  const [savingAttendance, setSavingAttendance] = useState<boolean>(false);
+  const [saveAttendanceError, setSaveAttendanceError] = useState<string | null>(null);
 
   // Student Search
   const [searchTerm, setSearchTerm] = useState<string>('');
@@ -136,7 +138,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
   };
 
   // 2. Cargar estudiantes reales del grupo seleccionado
-  const fetchStudentsForGroup = async (grupoId: string) => {
+  const fetchStudentsForGroup = async (grupoId: string, customFecha?: string, customMateria?: string) => {
     if (!grupoId) {
       setAsistenciaStudents([]);
       return;
@@ -149,6 +151,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
 
     setLoadingStudents(true);
     setStudentsError(null);
+    setSaveAttendanceError(null);
     try {
       const { data, error } = await supabase
         .from('estudiantes')
@@ -189,11 +192,34 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
 
       setAsistenciaStudents(mapped);
 
-      // Inicializar mapa de asistencia en 'presente'
+      // Inicializar mapa de asistencia por defecto en 'presente'
       const initialMap: Record<string, 'presente' | 'atraso' | 'falta' | 'licencia'> = {};
       mapped.forEach(st => {
         initialMap[st.id] = 'presente';
       });
+
+      // Si existe una sesión previa guardada para esta fecha y materia, precargar estados reales
+      const targetFecha = customFecha || fechaClase;
+      const targetMateria = (customMateria !== undefined ? customMateria : materiaClase).trim();
+
+      if (targetFecha && targetMateria) {
+        const { data: sesionData } = await supabase
+          .from('sesiones_clase')
+          .select('id, asistencias_estudiantes(estudiante_id, estado)')
+          .eq('grupo_id', grupoId)
+          .eq('fecha', targetFecha)
+          .eq('materia', targetMateria)
+          .maybeSingle();
+
+        if (sesionData && Array.isArray((sesionData as any).asistencias_estudiantes)) {
+          (sesionData as any).asistencias_estudiantes.forEach((a: any) => {
+            if (a.estudiante_id && a.estado) {
+              initialMap[a.estudiante_id] = a.estado;
+            }
+          });
+        }
+      }
+
       setAttendanceMap(initialMap);
     } catch (err: any) {
       console.error('Error al cargar estudiantes del grupo desde Supabase:', err);
@@ -283,29 +309,39 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
   // Efecto para cargar estudiantes al cambiar grupo seleccionado
   useEffect(() => {
     if (selectedGrupoId) {
-      fetchStudentsForGroup(selectedGrupoId);
+      setAttendanceSaved(false);
       const currentG = assignedGroups.find(g => g.id === selectedGrupoId);
+      const mat = currentG ? currentG.materia : materiaClase;
       if (currentG) {
         setMateriaClase(currentG.materia);
       }
+      fetchStudentsForGroup(selectedGrupoId, fechaClase, mat);
     } else {
       setAsistenciaStudents([]);
     }
   }, [selectedGrupoId]);
+
+  // Efecto para recargar si cambia la fecha
+  useEffect(() => {
+    if (selectedGrupoId && activeSubTab === 'asistencia') {
+      setAttendanceSaved(false);
+      fetchStudentsForGroup(selectedGrupoId, fechaClase, materiaClase);
+    }
+  }, [fechaClase]);
 
   useEffect(() => {
     const handleStudentAdded = () => {
       if (activeSubTab === 'nomina') {
         fetchNomina();
       } else if (activeSubTab === 'asistencia' && selectedGrupoId) {
-        fetchStudentsForGroup(selectedGrupoId);
+        fetchStudentsForGroup(selectedGrupoId, fechaClase, materiaClase);
       }
     };
     window.addEventListener('estudiante-added', handleStudentAdded);
     return () => {
       window.removeEventListener('estudiante-added', handleStudentAdded);
     };
-  }, [activeSubTab, selectedGrupoId]);
+  }, [activeSubTab, selectedGrupoId, fechaClase, materiaClase]);
 
   // Nomina tab filtered real students
   const filteredNominaStudents = nominaStudents.filter((e) => {
@@ -330,35 +366,130 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
 
   const handleSaveAttendance = async (e: React.FormEvent) => {
     e.preventDefault();
-    const syncKey = `asis-est-${selectedGrupoId}-${fechaClase}-${Date.now()}`;
+    if (!selectedGrupoId) {
+      setSaveAttendanceError('Debe seleccionar un grupo asignado.');
+      return;
+    }
+    if (asistenciaStudents.length === 0) {
+      setSaveAttendanceError('No hay estudiantes en el grupo seleccionado para registrar asistencia.');
+      return;
+    }
+    const materiaTrimmed = materiaClase.trim();
+    if (!materiaTrimmed) {
+      setSaveAttendanceError('Debe especificar la materia o módulo de la sesión de clase.');
+      return;
+    }
+
+    setSavingAttendance(true);
+    setSaveAttendanceError(null);
 
     const items: Array<{
       estudiante_id: string;
       estado: 'presente' | 'atraso' | 'falta' | 'licencia';
-    }> = Object.entries(attendanceMap).map(([estId, st]) => ({
-      estudiante_id: estId,
-      estado: st as 'presente' | 'atraso' | 'falta' | 'licencia'
+    }> = asistenciaStudents.map(st => ({
+      estudiante_id: st.id,
+      estado: attendanceMap[st.id] || 'presente'
     }));
 
-    if (!isOnline) {
-      await saveOfflineEstudianteAsistencia({
-        sync_key: syncKey,
-        grupo_id: selectedGrupoId,
-        fecha: fechaClase,
-        materia: materiaClase,
-        docente_id: user.id,
-        asistencias: items,
-        timestamp: Date.now()
-      });
+    try {
+      if (!isOnline) {
+        const syncKey = `asis-est-${selectedGrupoId}-${fechaClase}-${Date.now()}`;
+        await saveOfflineEstudianteAsistencia({
+          sync_key: syncKey,
+          grupo_id: selectedGrupoId,
+          fecha: fechaClase,
+          materia: materiaTrimmed,
+          docente_id: user.id,
+          asistencias: items,
+          timestamp: Date.now()
+        });
+      } else {
+        if (!isSupabaseConfigured || !supabase) {
+          throw new Error('Supabase no está configurado para el guardado en línea.');
+        }
+
+        // 1. Buscar si ya existe una sesión en public.sesiones_clase
+        let { data: sesionData, error: sesionSelectError } = await supabase
+          .from('sesiones_clase')
+          .select('id')
+          .eq('grupo_id', selectedGrupoId)
+          .eq('fecha', fechaClase)
+          .eq('materia', materiaTrimmed)
+          .maybeSingle();
+
+        if (sesionSelectError) {
+          throw new Error(`Error al verificar sesión de clase: ${sesionSelectError.message}`);
+        }
+
+        let sesionId = sesionData?.id;
+
+        // 2. Si no existe la sesión, crearla
+        if (!sesionId) {
+          const { data: newSesion, error: sesionInsertError } = await supabase
+            .from('sesiones_clase')
+            .insert({
+              grupo_id: selectedGrupoId,
+              docente_id: user.id,
+              fecha: fechaClase,
+              materia: materiaTrimmed
+            })
+            .select('id')
+            .single();
+
+          if (sesionInsertError) {
+            // Manejar si hubo carrera o conflicto de clave única (UNIQUE grupo_id, fecha, materia)
+            if (sesionInsertError.code === '23505') {
+              const { data: retrySesion, error: retryError } = await supabase
+                .from('sesiones_clase')
+                .select('id')
+                .eq('grupo_id', selectedGrupoId)
+                .eq('fecha', fechaClase)
+                .eq('materia', materiaTrimmed)
+                .single();
+              if (retryError || !retrySesion) {
+                throw new Error(`Error al recuperar sesión existente tras conflicto: ${sesionInsertError.message}`);
+              }
+              sesionId = retrySesion.id;
+            } else {
+              throw new Error(`Error al crear sesión de clase: ${sesionInsertError.message}`);
+            }
+          } else {
+            sesionId = newSesion.id;
+          }
+        }
+
+        // 3. Upsert en public.asistencias_estudiantes con onConflict: 'sesion_id,estudiante_id'
+        const asistenciasPayload = items.map(item => ({
+          sesion_id: sesionId,
+          estudiante_id: item.estudiante_id,
+          estado: item.estado,
+          observacion: null
+        }));
+
+        const { error: asistenciasError } = await supabase
+          .from('asistencias_estudiantes')
+          .upsert(asistenciasPayload, { onConflict: 'sesion_id,estudiante_id' });
+
+        if (asistenciasError) {
+          throw new Error(`Error al guardar registros en asistencias_estudiantes: ${asistenciasError.message}`);
+        }
+      }
+
+      // Calculate group percentage: (presente + atraso) / total * 100
+      const presentesOatrasos = items.filter(i => i.estado === 'presente' || i.estado === 'atraso').length;
+      const totalGroup = Math.max(1, items.length);
+      const percent = Math.round((presentesOatrasos / totalGroup) * 100);
+
+      setSavedGroupPercent(percent);
+      setAttendanceSaved(true);
+      window.dispatchEvent(new Event('asistencia-estudiantes-guardada'));
+    } catch (err: any) {
+      console.error('Error al guardar asistencia estudiantil en Supabase:', err);
+      setSaveAttendanceError(err.message || 'Ocurrió un error al guardar la asistencia en Supabase.');
+      setAttendanceSaved(false);
+    } finally {
+      setSavingAttendance(false);
     }
-
-    // Calculate group percentage: (presente + atraso) / total * 100
-    const presentesOatrasos = items.filter(i => i.estado === 'presente' || i.estado === 'atraso').length;
-    const totalGroup = Math.max(1, items.length);
-    const percent = Math.round((presentesOatrasos / totalGroup) * 100);
-
-    setSavedGroupPercent(percent);
-    setAttendanceSaved(true);
   };
 
   const handleExportNomina = () => {
@@ -537,17 +668,17 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
               )}
 
               {attendanceSaved && savedGroupPercent !== null && (
-                <div className="p-4 bg-emerald-100 border border-emerald-300 rounded-3xl space-y-2 text-center text-emerald-950">
+                <div className="p-5 bg-emerald-50 border border-emerald-300 rounded-3xl space-y-2 text-center text-emerald-950 shadow-xs">
                   <Sparkles className="w-8 h-8 text-[#00A651] mx-auto" />
-                  <h4 className="font-extrabold text-lg">¡Asistencia Registrada Localmente!</h4>
-                  <p className="text-xs font-medium">
-                    Porcentaje de asistencia del grupo hoy: <strong className="text-base text-[#00A651]">{savedGroupPercent}%</strong>
+                  <h4 className="font-extrabold text-lg text-emerald-900">¡Asistencia Guardada en Supabase!</h4>
+                  <p className="text-xs font-medium text-emerald-800">
+                    Porcentaje de asistencia del grupo: <strong className="text-base text-[#00A651]">{savedGroupPercent}%</strong>
                   </p>
                   <button
                     onClick={() => setAttendanceSaved(false)}
-                    className="px-4 py-2 bg-[#00A651] text-white font-bold text-xs rounded-xl mt-2 hover:bg-[#008d44] transition-colors"
+                    className="px-5 py-2.5 bg-[#00A651] text-white font-bold text-xs rounded-xl mt-2 hover:bg-[#008d44] transition-colors inline-flex items-center gap-1.5 shadow-xs"
                   >
-                    Modificar Registro
+                    <span>Modificar o Revisar Lista</span>
                   </button>
                 </div>
               )}
@@ -628,12 +759,28 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
                     );
                   })}
 
+                  {/* Error Saving Banner */}
+                  {saveAttendanceError && (
+                    <div className="p-4 bg-red-50 border border-red-200 text-red-700 rounded-2xl text-xs flex items-center gap-2 font-medium">
+                      <AlertCircle className="w-5 h-5 text-red-600 shrink-0" />
+                      <span>{saveAttendanceError}</span>
+                    </div>
+                  )}
+
                   <button
                     type="submit"
                     id="btn-guardar-asistencia-est"
-                    className="w-full h-14 bg-[#00A651] hover:bg-[#008f45] text-white font-extrabold text-lg rounded-2xl shadow-md flex items-center justify-center gap-2 transition-colors"
+                    disabled={savingAttendance}
+                    className="w-full h-14 bg-[#00A651] hover:bg-[#008f45] disabled:opacity-60 text-white font-extrabold text-lg rounded-2xl shadow-md flex items-center justify-center gap-2 transition-colors cursor-pointer disabled:cursor-not-allowed"
                   >
-                    <span>GUARDAR ASISTENCIA DEL GRUPO</span>
+                    {savingAttendance ? (
+                      <>
+                        <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                        <span>GUARDANDO EN SUPABASE...</span>
+                      </>
+                    ) : (
+                      <span>GUARDAR ASISTENCIA DEL GRUPO</span>
+                    )}
                   </button>
                 </form>
               )}
