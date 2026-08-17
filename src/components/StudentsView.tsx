@@ -53,6 +53,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
   
   const [attendanceSaved, setAttendanceSaved] = useState<boolean>(false);
   const [savedGroupPercent, setSavedGroupPercent] = useState<number | null>(null);
+  const [savedMode, setSavedMode] = useState<'cloud' | 'offline'>('cloud');
   const [savingAttendance, setSavingAttendance] = useState<boolean>(false);
   const [saveAttendanceError, setSaveAttendanceError] = useState<string | null>(null);
 
@@ -364,6 +365,23 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
     setAttendanceMap(prev => ({ ...prev, [studentId]: status }));
   };
 
+  // Helper to distinguish real network/connection errors from DB/RLS errors
+  const isNetworkError = (error: any): boolean => {
+    if (!error) return false;
+    const msg = (error.message || error.details || error.hint || String(error)).toLowerCase();
+    return (
+      msg.includes('failed to fetch') ||
+      msg.includes('networkerror') ||
+      msg.includes('network request failed') ||
+      msg.includes('network error') ||
+      msg.includes('timeout') ||
+      msg.includes('connection refused') ||
+      msg.includes('abort') ||
+      msg.includes('offline') ||
+      (typeof navigator !== 'undefined' && !navigator.onLine)
+    );
+  };
+
   const handleSaveAttendance = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedGrupoId) {
@@ -391,23 +409,10 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
       estado: attendanceMap[st.id] || 'presente'
     }));
 
-    try {
-      if (!isOnline) {
-        const syncKey = `asis-est-${selectedGrupoId}-${fechaClase}-${Date.now()}`;
-        await saveOfflineEstudianteAsistencia({
-          sync_key: syncKey,
-          grupo_id: selectedGrupoId,
-          fecha: fechaClase,
-          materia: materiaTrimmed,
-          docente_id: user.id,
-          asistencias: items,
-          timestamp: Date.now()
-        });
-      } else {
-        if (!isSupabaseConfigured || !supabase) {
-          throw new Error('Supabase no está configurado para el guardado en línea.');
-        }
-
+    // Estrategia Online-First:
+    // Si Supabase está configurado, intentar SIEMPRE primero en Supabase
+    if (isSupabaseConfigured && supabase) {
+      try {
         // 1. Buscar si ya existe una sesión en public.sesiones_clase
         let { data: sesionData, error: sesionSelectError } = await supabase
           .from('sesiones_clase')
@@ -418,7 +423,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
           .maybeSingle();
 
         if (sesionSelectError) {
-          throw new Error(`Error al verificar sesión de clase: ${sesionSelectError.message}`);
+          throw sesionSelectError;
         }
 
         let sesionId = sesionData?.id;
@@ -447,11 +452,11 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
                 .eq('materia', materiaTrimmed)
                 .single();
               if (retryError || !retrySesion) {
-                throw new Error(`Error al recuperar sesión existente tras conflicto: ${sesionInsertError.message}`);
+                throw retryError || new Error(`Error al recuperar sesión existente tras conflicto: ${sesionInsertError.message}`);
               }
               sesionId = retrySesion.id;
             } else {
-              throw new Error(`Error al crear sesión de clase: ${sesionInsertError.message}`);
+              throw sesionInsertError;
             }
           } else {
             sesionId = newSesion.id;
@@ -471,21 +476,85 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
           .upsert(asistenciasPayload, { onConflict: 'sesion_id,estudiante_id' });
 
         if (asistenciasError) {
-          throw new Error(`Error al guardar registros en asistencias_estudiantes: ${asistenciasError.message}`);
+          throw asistenciasError;
+        }
+
+        // Éxito en Supabase
+        const presentesOatrasos = items.filter(i => i.estado === 'presente' || i.estado === 'atraso').length;
+        const totalGroup = Math.max(1, items.length);
+        const percent = Math.round((presentesOatrasos / totalGroup) * 100);
+
+        setSavedGroupPercent(percent);
+        setSavedMode('cloud');
+        setAttendanceSaved(true);
+        window.dispatchEvent(new Event('asistencia-estudiantes-guardada'));
+        setSavingAttendance(false);
+        return;
+      } catch (cloudErr: any) {
+        console.warn('Fallo al intentar guardar en Supabase:', cloudErr);
+
+        // Si es un error real de red/desconexión, derivar a guardado offline (IndexedDB)
+        if (isNetworkError(cloudErr)) {
+          try {
+            const syncKey = `asis-est-${selectedGrupoId}-${fechaClase}-${Date.now()}`;
+            await saveOfflineEstudianteAsistencia({
+              sync_key: syncKey,
+              grupo_id: selectedGrupoId,
+              fecha: fechaClase,
+              materia: materiaTrimmed,
+              docente_id: user.id,
+              asistencias: items,
+              timestamp: Date.now()
+            });
+
+            const presentesOatrasos = items.filter(i => i.estado === 'presente' || i.estado === 'atraso').length;
+            const totalGroup = Math.max(1, items.length);
+            const percent = Math.round((presentesOatrasos / totalGroup) * 100);
+
+            setSavedGroupPercent(percent);
+            setSavedMode('offline');
+            setAttendanceSaved(true);
+            setSavingAttendance(false);
+            return;
+          } catch (offlineErr: any) {
+            setSaveAttendanceError(`Error al guardar sin conexión: ${offlineErr.message || 'Error en IndexedDB'}`);
+            setAttendanceSaved(false);
+            setSavingAttendance(false);
+            return;
+          }
+        } else {
+          // Es un error de Base de Datos / RLS / Permisos / SQL: NO guardar offline ni marcar éxito
+          const detailedMsg = cloudErr.message || cloudErr.details || 'Error de base de datos en Supabase';
+          setSaveAttendanceError(`Error de Supabase: ${detailedMsg}`);
+          setAttendanceSaved(false);
+          setSavingAttendance(false);
+          return;
         }
       }
+    }
 
-      // Calculate group percentage: (presente + atraso) / total * 100
+    // Si Supabase no está configurado, guardar en IndexedDB
+    try {
+      const syncKey = `asis-est-${selectedGrupoId}-${fechaClase}-${Date.now()}`;
+      await saveOfflineEstudianteAsistencia({
+        sync_key: syncKey,
+        grupo_id: selectedGrupoId,
+        fecha: fechaClase,
+        materia: materiaTrimmed,
+        docente_id: user.id,
+        asistencias: items,
+        timestamp: Date.now()
+      });
+
       const presentesOatrasos = items.filter(i => i.estado === 'presente' || i.estado === 'atraso').length;
       const totalGroup = Math.max(1, items.length);
       const percent = Math.round((presentesOatrasos / totalGroup) * 100);
 
       setSavedGroupPercent(percent);
+      setSavedMode('offline');
       setAttendanceSaved(true);
-      window.dispatchEvent(new Event('asistencia-estudiantes-guardada'));
     } catch (err: any) {
-      console.error('Error al guardar asistencia estudiantil en Supabase:', err);
-      setSaveAttendanceError(err.message || 'Ocurrió un error al guardar la asistencia en Supabase.');
+      setSaveAttendanceError(`Error al guardar localmente: ${err.message || 'Error inesperado'}`);
       setAttendanceSaved(false);
     } finally {
       setSavingAttendance(false);
@@ -668,15 +737,37 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
               )}
 
               {attendanceSaved && savedGroupPercent !== null && (
-                <div className="p-5 bg-emerald-50 border border-emerald-300 rounded-3xl space-y-2 text-center text-emerald-950 shadow-xs">
-                  <Sparkles className="w-8 h-8 text-[#00A651] mx-auto" />
-                  <h4 className="font-extrabold text-lg text-emerald-900">¡Asistencia Guardada en Supabase!</h4>
-                  <p className="text-xs font-medium text-emerald-800">
-                    Porcentaje de asistencia del grupo: <strong className="text-base text-[#00A651]">{savedGroupPercent}%</strong>
+                <div
+                  className={`p-5 rounded-3xl space-y-2 text-center shadow-xs border ${
+                    savedMode === 'cloud'
+                      ? 'bg-emerald-50 border-emerald-300 text-emerald-950'
+                      : 'bg-amber-50 border-amber-300 text-amber-950'
+                  }`}
+                >
+                  <Sparkles
+                    className={`w-8 h-8 mx-auto ${
+                      savedMode === 'cloud' ? 'text-[#00A651]' : 'text-amber-600'
+                    }`}
+                  />
+                  <h4 className="font-extrabold text-lg">
+                    {savedMode === 'cloud'
+                      ? '¡Asistencia guardada en Supabase!'
+                      : 'Sin conexión. Asistencia guardada localmente y pendiente de sincronización.'}
+                  </h4>
+                  <p
+                    className={`text-xs font-medium ${
+                      savedMode === 'cloud' ? 'text-emerald-800' : 'text-amber-800'
+                    }`}
+                  >
+                    Porcentaje de asistencia del grupo: <strong className="text-base font-extrabold">{savedGroupPercent}%</strong>
                   </p>
                   <button
                     onClick={() => setAttendanceSaved(false)}
-                    className="px-5 py-2.5 bg-[#00A651] text-white font-bold text-xs rounded-xl mt-2 hover:bg-[#008d44] transition-colors inline-flex items-center gap-1.5 shadow-xs"
+                    className={`px-5 py-2.5 text-white font-bold text-xs rounded-xl mt-2 transition-colors inline-flex items-center gap-1.5 shadow-xs ${
+                      savedMode === 'cloud'
+                        ? 'bg-[#00A651] hover:bg-[#008d44]'
+                        : 'bg-amber-600 hover:bg-amber-700'
+                    }`}
                   >
                     <span>Modificar o Revisar Lista</span>
                   </button>
