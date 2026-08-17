@@ -12,7 +12,14 @@ import {
   CheckCircle2,
   RefreshCw,
   UserCheck,
-  UserX
+  UserX,
+  Calendar,
+  Clock,
+  ChevronDown,
+  ChevronUp,
+  XCircle,
+  AlertCircle,
+  BookOpen
 } from 'lucide-react';
 import { Perfil, Estudiante, Programa, Sede, NivelEducativo } from '../types';
 import {
@@ -33,13 +40,36 @@ import {
   getLocalProgramas,
   getLocalNiveles
 } from '../lib/academic';
+import { supabase, isSupabaseConfigured } from '../lib/supabase';
 
 interface ReportsViewProps {
   user: Perfil;
 }
 
+interface SesionReportItem {
+  id: string;
+  fecha: string;
+  materia: string;
+  grupo_id: string;
+  grupo_nombre: string;
+  sede_nombre: string;
+  docente_nombre: string;
+  total: number;
+  presentes: number;
+  atrasos: number;
+  faltas: number;
+  licencias: number;
+  porcentaje: number;
+  estudiantes_detalle: Array<{
+    id: string;
+    nombre_completo: string;
+    codigo_interno: string;
+    estado: 'presente' | 'atraso' | 'falta' | 'licencia';
+  }>;
+}
+
 export const ReportsView: React.FC<ReportsViewProps> = ({ user }) => {
-  const [activeTab, setActiveTab] = useState<'estadistico' | 'planillas'>('estadistico');
+  const [activeTab, setActiveTab] = useState<'estadistico' | 'asistencia_estudiantes' | 'planillas'>('estadistico');
 
   // Load dynamic student data and structure
   const [estudiantes, setEstudiantes] = useState<Estudiante[]>(() => getLocalEstudiantes());
@@ -60,6 +90,17 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ user }) => {
   const [selectedMonth, setSelectedMonth] = useState<string>('2026-07');
   const [selectedSedePlanilla, setSelectedSedePlanilla] = useState<string>('Todas');
 
+  // Asistencia Estudiantil Real History Filters & State
+  const [dbSedes, setDbSedes] = useState<Array<{ id: string; nombre: string }>>([]);
+  const [dbGrupos, setDbGrupos] = useState<Array<{ id: string; nombre: string; sede_id: string }>>([]);
+  const [historiaSedeId, setHistoriaSedeId] = useState<string>('todas');
+  const [historiaGrupoId, setHistoriaGrupoId] = useState<string>('todos');
+  const [historiaFecha, setHistoriaFecha] = useState<string>('');
+  const [sesionesHistorial, setSesionesHistorial] = useState<SesionReportItem[]>([]);
+  const [loadingHistorial, setLoadingHistorial] = useState<boolean>(false);
+  const [historialError, setHistorialError] = useState<string | null>(null);
+  const [expandedSesionId, setExpandedSesionId] = useState<string | null>(null);
+
   const refreshData = async () => {
     setIsLoading(true);
     const loaded = await loadEstudiantesFromSupabase();
@@ -69,21 +110,247 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ user }) => {
     setIsLoading(false);
   };
 
+  // Cargar sedes y grupos reales de Supabase para los filtros de historial
+  const loadFiltrosHistorial = async () => {
+    if (!isSupabaseConfigured || !supabase) return;
+    try {
+      // 1. Cargar sedes activas
+      const { data: sedesData, error: sedesErr } = await supabase
+        .from('sedes')
+        .select('id, nombre')
+        .eq('activo', true)
+        .order('nombre', { ascending: true });
+
+      if (!sedesErr && sedesData) {
+        setDbSedes(sedesData);
+      }
+
+      // 2. Cargar grupos activos
+      const { data: gruposData, error: gruposErr } = await supabase
+        .from('grupos')
+        .select('id, nombre, sede_id')
+        .eq('activo', true)
+        .order('nombre', { ascending: true });
+
+      if (!gruposErr && gruposData) {
+        setDbGrupos(gruposData);
+      }
+    } catch (err) {
+      console.error('Error al cargar filtros de historial desde Supabase:', err);
+    }
+  };
+
+  // Consultar historial real de asistencia estudiantil
+  const fetchSesionesHistorial = async () => {
+    if (!isSupabaseConfigured || !supabase) {
+      setHistorialError('Supabase no está configurado.');
+      return;
+    }
+
+    setLoadingHistorial(true);
+    setHistorialError(null);
+
+    try {
+      // Determinar qué grupos aplicar al filtro
+      let targetGrupoIds: string[] = [];
+
+      if (historiaGrupoId !== 'todos') {
+        targetGrupoIds = [historiaGrupoId];
+      } else if (historiaSedeId !== 'todas') {
+        targetGrupoIds = dbGrupos
+          .filter(g => g.sede_id === historiaSedeId)
+          .map(g => g.id);
+
+        if (targetGrupoIds.length === 0) {
+          setSesionesHistorial([]);
+          setLoadingHistorial(false);
+          return;
+        }
+      }
+
+      // 1. Cargar sesiones de clase reales
+      let query = supabase
+        .from('sesiones_clase')
+        .select('id, grupo_id, docente_id, fecha, materia, created_at')
+        .order('fecha', { ascending: false });
+
+      if (targetGrupoIds.length > 0) {
+        query = query.in('grupo_id', targetGrupoIds);
+      }
+
+      if (historiaFecha) {
+        query = query.eq('fecha', historiaFecha);
+      }
+
+      const { data: sesionesData, error: sesionesErr } = await query;
+
+      if (sesionesErr) {
+        throw new Error(sesionesErr.message);
+      }
+
+      if (!sesionesData || sesionesData.length === 0) {
+        setSesionesHistorial([]);
+        setLoadingHistorial(false);
+        return;
+      }
+
+      const sesionIds = sesionesData.map(s => s.id);
+      const grupoIds = Array.from(new Set(sesionesData.map(s => s.grupo_id)));
+      const docenteIds = Array.from(new Set(sesionesData.map(s => s.docente_id).filter(Boolean)));
+
+      // 2. Cargar asistencias asociadas a estas sesiones
+      const { data: asistenciasData, error: asistenciasErr } = await supabase
+        .from('asistencias_estudiantes')
+        .select('id, sesion_id, estudiante_id, estado')
+        .in('sesion_id', sesionIds);
+
+      if (asistenciasErr) {
+        throw new Error(asistenciasErr.message);
+      }
+
+      // 3. Cargar grupos y sedes para resolver nombres
+      const { data: gruposDetalle } = await supabase
+        .from('grupos')
+        .select('id, nombre, sede_id')
+        .in('id', grupoIds);
+
+      const sedeIds = Array.from(new Set((gruposDetalle || []).map(g => g.sede_id).filter(Boolean)));
+      const { data: sedesDetalle } = await supabase
+        .from('sedes')
+        .select('id, nombre')
+        .in('id', sedeIds);
+
+      const sedeMap = new Map<string, string>();
+      (sedesDetalle || []).forEach(s => sedeMap.set(s.id, s.nombre));
+
+      const grupoMap = new Map<string, { nombre: string; sede_nombre: string }>();
+      (gruposDetalle || []).forEach(g => {
+        grupoMap.set(g.id, {
+          nombre: g.nombre,
+          sede_nombre: sedeMap.get(g.sede_id) || 'Sede sin asignar'
+        });
+      });
+
+      // 4. Cargar perfiles de docentes
+      const { data: perfilesData } = await supabase
+        .from('perfiles')
+        .select('id, nombre_completo')
+        .in('id', docenteIds);
+
+      const docenteMap = new Map<string, string>();
+      (perfilesData || []).forEach(p => docenteMap.set(p.id, p.nombre_completo));
+
+      // 5. Cargar estudiantes asociados
+      const estudianteIds = Array.from(new Set((asistenciasData || []).map(a => a.estudiante_id)));
+      let estudianteMap = new Map<string, { nombre_completo: string; codigo_interno: string }>();
+
+      if (estudianteIds.length > 0) {
+        const { data: estudiantesData } = await supabase
+          .from('estudiantes')
+          .select('id, nombre_completo, codigo_interno')
+          .in('id', estudianteIds);
+
+        (estudiantesData || []).forEach(st => {
+          estudianteMap.set(st.id, {
+            nombre_completo: st.nombre_completo,
+            codigo_interno: st.codigo_interno || 'S/C'
+          });
+        });
+      }
+
+      // 6. Construir las sesiones con métricas calculadas y detalle de alumnos
+      const builtSesiones: SesionReportItem[] = sesionesData.map(ses => {
+        const sesAsistencias = (asistenciasData || []).filter(a => a.sesion_id === ses.id);
+        const total = sesAsistencias.length;
+        const presentes = sesAsistencias.filter(a => a.estado === 'presente').length;
+        const atrasos = sesAsistencias.filter(a => a.estado === 'atraso').length;
+        const faltas = sesAsistencias.filter(a => a.estado === 'falta').length;
+        const licencias = sesAsistencias.filter(a => a.estado === 'licencia').length;
+
+        // Porcentaje: (presentes + atrasos) / total * 100
+        const porcentaje = total > 0 ? Math.round(((presentes + atrasos) / total) * 100) : 0;
+
+        const grupoInfo = grupoMap.get(ses.grupo_id);
+        const docenteNombre = docenteMap.get(ses.docente_id) || 'Docente no asignado';
+
+        const estudiantesDetalle = sesAsistencias.map(a => {
+          const st = estudianteMap.get(a.estudiante_id);
+          return {
+            id: a.estudiante_id,
+            nombre_completo: st?.nombre_completo || 'Estudiante no registrado',
+            codigo_interno: st?.codigo_interno || 'S/C',
+            estado: a.estado as 'presente' | 'atraso' | 'falta' | 'licencia'
+          };
+        });
+
+        // Ordenar estudiantes alfabéticamente
+        estudiantesDetalle.sort((a, b) => a.nombre_completo.localeCompare(b.nombre_completo));
+
+        return {
+          id: ses.id,
+          fecha: ses.fecha,
+          materia: ses.materia,
+          grupo_id: ses.grupo_id,
+          grupo_nombre: grupoInfo?.nombre || 'Grupo no identificado',
+          sede_nombre: grupoInfo?.sede_nombre || 'Sede no identificada',
+          docente_nombre: docenteNombre,
+          total,
+          presentes,
+          atrasos,
+          faltas,
+          licencias,
+          porcentaje,
+          estudiantes_detalle: estudiantesDetalle
+        };
+      });
+
+      setSesionesHistorial(builtSesiones);
+    } catch (err: any) {
+      console.error('Error al cargar historial de asistencia:', err);
+      setHistorialError(err.message || 'Error al consultar sesiones de clase en Supabase.');
+    } finally {
+      setLoadingHistorial(false);
+    }
+  };
+
   useEffect(() => {
     refreshData();
+    loadFiltrosHistorial();
 
     // Listen to academic changes from Administration
     const handleAcademicChanged = () => {
       setProgramas(getLocalProgramas());
       setNiveles(getLocalNiveles());
       setEstudiantes(getLocalEstudiantes());
+      loadFiltrosHistorial();
+    };
+
+    const handleAsistenciaSaved = () => {
+      if (activeTab === 'asistencia_estudiantes') {
+        fetchSesionesHistorial();
+      }
     };
 
     window.addEventListener('academicStructureChanged', handleAcademicChanged);
+    window.addEventListener('asistencia-estudiantes-guardada', handleAsistenciaSaved);
     return () => {
       window.removeEventListener('academicStructureChanged', handleAcademicChanged);
+      window.removeEventListener('asistencia-estudiantes-guardada', handleAsistenciaSaved);
     };
   }, []);
+
+  // Cargar historial cuando se entra a la pestaña o cambian los filtros
+  useEffect(() => {
+    if (activeTab === 'asistencia_estudiantes') {
+      fetchSesionesHistorial();
+    }
+  }, [activeTab, historiaSedeId, historiaGrupoId, historiaFecha]);
+
+  // Grupos filtrados para el selector de historial
+  const filteredGruposForHistoria = useMemo(() => {
+    if (historiaSedeId === 'todas') return dbGrupos;
+    return dbGrupos.filter(g => g.sede_id === historiaSedeId);
+  }, [dbGrupos, historiaSedeId]);
 
   // Filter students dynamically based on current filters
   const filteredEstudiantes = useMemo(() => {
@@ -255,29 +522,291 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ user }) => {
       </div>
 
       {/* Main Subtabs Selector */}
-      <div className="flex bg-slate-200 p-1 rounded-2xl">
+      <div className="flex bg-slate-200 p-1 rounded-2xl gap-1 overflow-x-auto">
         <button
           onClick={() => setActiveTab('estadistico')}
-          className={`flex-1 py-2.5 rounded-xl text-xs font-extrabold flex items-center justify-center gap-2 transition-all ${
+          className={`flex-1 py-2.5 px-2 rounded-xl text-xs font-extrabold flex items-center justify-center gap-1.5 transition-all whitespace-nowrap ${
             activeTab === 'estadistico' ? 'bg-[#00A651] text-white shadow-xs' : 'text-slate-700 hover:text-slate-900'
           }`}
         >
-          <BarChart3 className="w-4 h-4" />
-          <span>Reporte Estadístico de Estudiantes</span>
+          <BarChart3 className="w-4 h-4 shrink-0" />
+          <span>Estadístico</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('asistencia_estudiantes')}
+          className={`flex-1 py-2.5 px-2 rounded-xl text-xs font-extrabold flex items-center justify-center gap-1.5 transition-all whitespace-nowrap ${
+            activeTab === 'asistencia_estudiantes' ? 'bg-[#00A651] text-white shadow-xs' : 'text-slate-700 hover:text-slate-900'
+          }`}
+        >
+          <Users className="w-4 h-4 shrink-0" />
+          <span>Asistencia Estudiantil</span>
         </button>
 
         <button
           onClick={() => setActiveTab('planillas')}
-          className={`flex-1 py-2.5 rounded-xl text-xs font-extrabold flex items-center justify-center gap-2 transition-all ${
+          className={`flex-1 py-2.5 px-2 rounded-xl text-xs font-extrabold flex items-center justify-center gap-1.5 transition-all whitespace-nowrap ${
             activeTab === 'planillas' ? 'bg-[#00A651] text-white shadow-xs' : 'text-slate-700 hover:text-slate-900'
           }`}
         >
-          <FileSpreadsheet className="w-4 h-4" />
-          <span>Planillas Oficiales Excel</span>
+          <FileSpreadsheet className="w-4 h-4 shrink-0" />
+          <span>Planillas Excel</span>
         </button>
       </div>
 
-      {activeTab === 'estadistico' ? (
+      {/* ================= REPORTE HISTORIAL DE ASISTENCIA ESTUDIANTIL ================= */}
+      {activeTab === 'asistencia_estudiantes' && (
+        <div className="space-y-4">
+          {/* Panel de Filtros */}
+          <div className="p-4 bg-white rounded-3xl border border-slate-200 shadow-xs space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-slate-800 font-extrabold text-sm">
+                <Filter className="w-4 h-4 text-[#00A651]" />
+                <span>Filtros de Búsqueda</span>
+              </div>
+              {(historiaSedeId !== 'todas' || historiaGrupoId !== 'todos' || historiaFecha) && (
+                <button
+                  onClick={() => {
+                    setHistoriaSedeId('todas');
+                    setHistoriaGrupoId('todos');
+                    setHistoriaFecha('');
+                  }}
+                  className="text-[11px] font-bold text-slate-500 hover:text-red-600 transition-colors"
+                >
+                  Restablecer
+                </button>
+              )}
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              {/* Filtro Sede */}
+              <div>
+                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">
+                  Sede
+                </label>
+                <select
+                  value={historiaSedeId}
+                  onChange={(e) => {
+                    setHistoriaSedeId(e.target.value);
+                    setHistoriaGrupoId('todos');
+                  }}
+                  className="w-full h-10 px-3 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 focus:outline-none focus:border-[#00A651]"
+                >
+                  <option value="todas">Todas las sedes</option>
+                  {dbSedes.map(s => (
+                    <option key={s.id} value={s.id}>{s.nombre}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Filtro Grupo */}
+              <div>
+                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">
+                  Grupo
+                </label>
+                <select
+                  value={historiaGrupoId}
+                  onChange={(e) => setHistoriaGrupoId(e.target.value)}
+                  className="w-full h-10 px-3 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 focus:outline-none focus:border-[#00A651]"
+                >
+                  <option value="todos">Todos los grupos</option>
+                  {filteredGruposForHistoria.map(g => (
+                    <option key={g.id} value={g.id}>{g.nombre}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Filtro Fecha */}
+              <div>
+                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">
+                  Fecha (Opcional)
+                </label>
+                <input
+                  type="date"
+                  value={historiaFecha}
+                  onChange={(e) => setHistoriaFecha(e.target.value)}
+                  className="w-full h-10 px-3 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 focus:outline-none focus:border-[#00A651]"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Banner de Error */}
+          {historialError && (
+            <div className="p-4 bg-red-50 border border-red-200 rounded-2xl text-xs text-red-700 flex items-center gap-2 font-medium">
+              <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
+              <span>{historialError}</span>
+            </div>
+          )}
+
+          {/* Listado de Sesiones Reales */}
+          {loadingHistorial ? (
+            <div className="p-12 text-center bg-white rounded-3xl border border-slate-200">
+              <RefreshCw className="w-8 h-8 text-[#00A651] animate-spin mx-auto mb-2" />
+              <p className="text-xs font-bold text-slate-600">Consultando sesiones de clase en Supabase...</p>
+            </div>
+          ) : sesionesHistorial.length === 0 ? (
+            <div className="p-10 text-center bg-white rounded-3xl border border-slate-200 shadow-xs space-y-2">
+              <Calendar className="w-10 h-10 text-slate-300 mx-auto" />
+              <h4 className="font-extrabold text-sm text-slate-700">No se encontraron registros de asistencia para los criterios seleccionados.</h4>
+              <p className="text-xs text-slate-500">
+                Las asistencias guardadas por los docentes en las sesiones de clase aparecerán en este historial.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between px-1">
+                <span className="text-xs font-extrabold text-slate-600">
+                  {sesionesHistorial.length} {sesionesHistorial.length === 1 ? 'sesión registrada' : 'sesiones registradas'}
+                </span>
+                <span className="text-[11px] text-slate-400 font-medium">Toca una tarjeta para ver la lista de alumnos</span>
+              </div>
+
+              {sesionesHistorial.map((ses) => {
+                const isExpanded = expandedSesionId === ses.id;
+
+                return (
+                  <div
+                    key={ses.id}
+                    className="bg-white rounded-3xl border border-slate-200 shadow-xs overflow-hidden transition-all"
+                  >
+                    {/* Header de la Tarjeta de Sesión */}
+                    <div
+                      onClick={() => setExpandedSesionId(isExpanded ? null : ses.id)}
+                      className="p-4 cursor-pointer hover:bg-slate-50 transition-colors space-y-3"
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="px-2.5 py-0.5 bg-slate-100 text-slate-700 font-bold text-[11px] rounded-lg border border-slate-200">
+                              {ses.fecha}
+                            </span>
+                            <span className="px-2.5 py-0.5 bg-emerald-50 text-[#00A651] font-bold text-[11px] rounded-lg border border-emerald-200">
+                              {ses.grupo_nombre}
+                            </span>
+                            <span className="text-xs font-semibold text-slate-500">
+                              {ses.sede_nombre}
+                            </span>
+                          </div>
+                          <h4 className="font-extrabold text-base text-[#17324D] mt-1">
+                            {ses.materia}
+                          </h4>
+                          <p className="text-xs text-slate-500 font-medium">
+                            Docente: <strong className="text-slate-700">{ses.docente_nombre}</strong>
+                          </p>
+                        </div>
+
+                        {/* Porcentaje de Asistencia */}
+                        <div className="text-right shrink-0">
+                          <div className="inline-flex items-center gap-1">
+                            <span className={`text-xl font-extrabold ${ses.porcentaje >= 80 ? 'text-[#00A651]' : ses.porcentaje >= 60 ? 'text-amber-600' : 'text-red-600'}`}>
+                              {ses.porcentaje}%
+                            </span>
+                          </div>
+                          <p className="text-[10px] text-slate-400 font-bold uppercase">Asistencia</p>
+                          <div className="mt-1 flex justify-end">
+                            {isExpanded ? (
+                              <ChevronUp className="w-4 h-4 text-slate-400" />
+                            ) : (
+                              <ChevronDown className="w-4 h-4 text-slate-400" />
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Barra de Resumen de Estados */}
+                      <div className="grid grid-cols-5 gap-1 pt-2 border-t border-slate-100 text-center">
+                        <div className="bg-slate-50 p-1.5 rounded-xl">
+                          <p className="text-[9px] font-bold text-slate-400 uppercase">Total</p>
+                          <p className="text-xs font-extrabold text-slate-700">{ses.total}</p>
+                        </div>
+                        <div className="bg-emerald-50 p-1.5 rounded-xl border border-emerald-100">
+                          <p className="text-[9px] font-bold text-emerald-700 uppercase">Pres.</p>
+                          <p className="text-xs font-extrabold text-emerald-800">{ses.presentes}</p>
+                        </div>
+                        <div className="bg-amber-50 p-1.5 rounded-xl border border-amber-100">
+                          <p className="text-[9px] font-bold text-amber-700 uppercase">Atraso</p>
+                          <p className="text-xs font-extrabold text-amber-800">{ses.atrasos}</p>
+                        </div>
+                        <div className="bg-red-50 p-1.5 rounded-xl border border-red-100">
+                          <p className="text-[9px] font-bold text-red-700 uppercase">Falta</p>
+                          <p className="text-xs font-extrabold text-red-800">{ses.faltas}</p>
+                        </div>
+                        <div className="bg-blue-50 p-1.5 rounded-xl border border-blue-100">
+                          <p className="text-[9px] font-bold text-blue-700 uppercase">Lic.</p>
+                          <p className="text-xs font-extrabold text-blue-800">{ses.licencias}</p>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Detalle Desplegable de Estudiantes */}
+                    {isExpanded && (
+                      <div className="px-4 pb-4 pt-2 border-t border-slate-100 bg-slate-50/70 space-y-2">
+                        <div className="flex items-center justify-between text-xs font-bold text-slate-600 px-1">
+                          <span>Nómina de la Sesión ({ses.estudiantes_detalle.length} estudiantes)</span>
+                          <span className="text-[10px] text-slate-400 font-normal">Estado individual</span>
+                        </div>
+
+                        {ses.estudiantes_detalle.length === 0 ? (
+                          <p className="text-xs text-slate-500 text-center py-3">No hay estudiantes asociados en esta sesión.</p>
+                        ) : (
+                          <div className="space-y-1.5 max-h-72 overflow-y-auto pr-1">
+                            {ses.estudiantes_detalle.map((st, idx) => (
+                              <div
+                                key={st.id}
+                                className="bg-white p-2.5 rounded-2xl border border-slate-200 flex items-center justify-between gap-2 shadow-2xs"
+                              >
+                                <div className="min-w-0">
+                                  <p className="text-xs font-extrabold text-slate-800 truncate">
+                                    <span className="text-slate-400 font-medium mr-1.5">{idx + 1}.</span>
+                                    {st.nombre_completo}
+                                  </p>
+                                  <p className="text-[10px] text-slate-400 font-mono">
+                                    Cód: {st.codigo_interno}
+                                  </p>
+                                </div>
+
+                                <div className="shrink-0">
+                                  {st.estado === 'presente' && (
+                                    <span className="px-2.5 py-1 bg-emerald-100 text-[#00A651] font-extrabold text-[10px] rounded-lg inline-flex items-center gap-1">
+                                      <CheckCircle2 className="w-3 h-3" />
+                                      <span>Presente</span>
+                                    </span>
+                                  )}
+                                  {st.estado === 'atraso' && (
+                                    <span className="px-2.5 py-1 bg-amber-100 text-amber-800 font-extrabold text-[10px] rounded-lg inline-flex items-center gap-1">
+                                      <Clock className="w-3 h-3" />
+                                      <span>Atraso</span>
+                                    </span>
+                                  )}
+                                  {st.estado === 'falta' && (
+                                    <span className="px-2.5 py-1 bg-red-100 text-red-700 font-extrabold text-[10px] rounded-lg inline-flex items-center gap-1">
+                                      <XCircle className="w-3 h-3" />
+                                      <span>Falta</span>
+                                    </span>
+                                  )}
+                                  {st.estado === 'licencia' && (
+                                    <span className="px-2.5 py-1 bg-blue-100 text-blue-700 font-extrabold text-[10px] rounded-lg inline-flex items-center gap-1">
+                                      <BookOpen className="w-3 h-3" />
+                                      <span>Licencia</span>
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {activeTab === 'estadistico' && (
         /* ================= REPORTE ESTADÍSTICO DE ESTUDIANTES ================= */
         <div className="space-y-5">
           {/* Filters Bar */}
@@ -598,8 +1127,10 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ user }) => {
             </div>
           </div>
         </div>
-      ) : (
-        /* ================= PLANILLAS EN EXCEL EXISTENTES ================= */
+      )}
+
+      {/* ================= PLANILLAS EN EXCEL EXISTENTES ================= */}
+      {activeTab === 'planillas' && (
         <div className="space-y-4">
           <div className="p-4 bg-white rounded-3xl border border-slate-200 space-y-3">
             <h3 className="font-extrabold text-xs text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
