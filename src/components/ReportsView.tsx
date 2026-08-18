@@ -21,12 +21,11 @@ import {
   AlertCircle,
   BookOpen
 } from 'lucide-react';
-import { Perfil, Estudiante, Programa, Sede, NivelEducativo } from '../types';
+import { Perfil, Estudiante, Programa, NivelEducativo } from '../types';
 import {
   MOCK_ASISTENCIAS_DOCENTES,
   MOCK_ALERTAS,
-  MOCK_SEGUIMIENTOS,
-  INITIAL_SEDES
+  MOCK_SEGUIMIENTOS
 } from '../lib/mockData';
 import {
   downloadDocenteAttendanceReport,
@@ -75,9 +74,9 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ user }) => {
   const [estudiantes, setEstudiantes] = useState<Estudiante[]>(() => getLocalEstudiantes());
   const [programas, setProgramas] = useState<Programa[]>(() => getLocalProgramas());
   const [niveles, setNiveles] = useState<NivelEducativo[]>(() => getLocalNiveles());
-  const [sedes] = useState<Sede[]>(INITIAL_SEDES);
 
   const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [estadisticoError, setEstadisticoError] = useState<string | null>(null);
 
   // Filters State
   const [filterSede, setFilterSede] = useState<string>('Todas');
@@ -103,11 +102,19 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ user }) => {
 
   const refreshData = async () => {
     setIsLoading(true);
-    const loaded = await loadEstudiantesFromSupabase();
-    setEstudiantes(loaded);
-    setProgramas(getLocalProgramas());
-    setNiveles(getLocalNiveles());
-    setIsLoading(false);
+    setEstadisticoError(null);
+    try {
+      const loaded = await loadEstudiantesFromSupabase();
+      setEstudiantes(loaded);
+      setProgramas(getLocalProgramas());
+      setNiveles(getLocalNiveles());
+      await loadFiltrosHistorial();
+    } catch (err: any) {
+      console.error('Error al cargar datos de estudiantes:', err);
+      setEstadisticoError(err.message || 'Error al consultar estudiantes en Supabase.');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   // Cargar sedes y grupos reales de Supabase para los filtros de historial
@@ -355,8 +362,8 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ user }) => {
   // Filter students dynamically based on current filters
   const filteredEstudiantes = useMemo(() => {
     return estudiantes.filter(e => {
-      // Filter Sede
-      if (filterSede !== 'Todas' && e.sede_nombre !== filterSede && e.sede_id !== filterSede) {
+      // Filter Sede (comparing exact UUID)
+      if (filterSede !== 'Todas' && e.sede_id !== filterSede) {
         return false;
       }
 
@@ -441,11 +448,13 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ user }) => {
     const map: Record<string, { sede: string; grupo: string; total: number; activos: number; inactivos: number }> = {};
 
     filteredEstudiantes.forEach(e => {
-      const key = `${e.sede_nombre || 'Sede'} - ${e.grupo_nombre || 'Grupo'}`;
+      const sedeName = e.sede_nombre || 'Sede sin asignar';
+      const grupoName = e.grupo_nombre || 'Grupo sin asignar';
+      const key = `${sedeName} - ${grupoName}`;
       if (!map[key]) {
         map[key] = {
-          sede: e.sede_nombre || 'Poroma',
-          grupo: e.grupo_nombre || 'General',
+          sede: sedeName,
+          grupo: grupoName,
           total: 0,
           activos: 0,
           inactivos: 0
@@ -459,12 +468,15 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ user }) => {
       }
     });
 
-    return Object.values(map);
+    return Object.values(map).sort((a, b) => a.sede.localeCompare(b.sede) || a.grupo.localeCompare(b.grupo));
   }, [filteredEstudiantes]);
 
   const handleDownloadExcelEstadistico = () => {
+    const selectedSedeObj = dbSedes.find(s => s.id === filterSede);
+    const sedeLabel = filterSede === 'Todas' ? 'Todas las Sedes' : (selectedSedeObj?.nombre || filterSede);
+
     downloadStudentStatisticalReport(filteredEstudiantes, {
-      sede: filterSede,
+      sede: sedeLabel,
       programa: filterPrograma,
       nivel: filterNivel,
       sexo: filterSexo,
@@ -809,6 +821,14 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ user }) => {
       {activeTab === 'estadistico' && (
         /* ================= REPORTE ESTADÍSTICO DE ESTUDIANTES ================= */
         <div className="space-y-5">
+          {/* Banner de Error Estadístico */}
+          {estadisticoError && (
+            <div className="p-4 bg-red-50 border border-red-200 rounded-2xl text-xs text-red-700 flex items-center gap-2 font-medium">
+              <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
+              <span>{estadisticoError}</span>
+            </div>
+          )}
+
           {/* Filters Bar */}
           <div className="p-4 bg-white rounded-3xl border border-slate-200 shadow-xs space-y-3">
             <div className="flex items-center justify-between">
@@ -837,8 +857,8 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ user }) => {
                   className="w-full h-10 px-2.5 bg-slate-50 border border-slate-300 rounded-xl outline-none font-medium text-slate-900"
                 >
                   <option value="Todas">Todas las Sedes</option>
-                  {sedes.map(s => (
-                    <option key={s.id} value={s.nombre}>{s.nombre}</option>
+                  {dbSedes.map(s => (
+                    <option key={s.id} value={s.id}>{s.nombre}</option>
                   ))}
                 </select>
               </div>
@@ -1157,8 +1177,9 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ user }) => {
                   className="w-full h-11 px-3 bg-slate-50 border border-slate-300 rounded-xl outline-none"
                 >
                   <option value="Todas">Todas las Sedes</option>
-                  <option value="Sede Poroma">Sede Poroma</option>
-                  <option value="Sede San Juan de Horcas">Sede San Juan de Horcas</option>
+                  {dbSedes.map(s => (
+                    <option key={s.id} value={s.nombre}>{s.nombre}</option>
+                  ))}
                 </select>
               </div>
             </div>

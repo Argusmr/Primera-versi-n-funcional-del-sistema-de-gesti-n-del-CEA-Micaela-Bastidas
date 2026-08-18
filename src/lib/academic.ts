@@ -219,14 +219,14 @@ export function getLocalEstudiantes(): Estudiante[] {
     const raw = localStorage.getItem(KEY_ESTUDIANTES);
     if (raw) {
       const list = JSON.parse(raw);
-      if (Array.isArray(list) && list.length > 0) {
+      if (Array.isArray(list)) {
         return list;
       }
     }
   } catch (e) {
     console.warn('Error al leer estudiantes locales:', e);
   }
-  return MOCK_ESTUDIANTES;
+  return isSupabaseConfigured ? [] : MOCK_ESTUDIANTES;
 }
 
 export function saveLocalEstudiantes(list: Estudiante[]): void {
@@ -238,24 +238,66 @@ export function saveLocalEstudiantes(list: Estudiante[]): void {
   }
 }
 
-// Load real students from Supabase or fallback
+// Load real students from Supabase and resolve relations
 export async function loadEstudiantesFromSupabase(): Promise<Estudiante[]> {
-  const local = getLocalEstudiantes();
-
-  if (isSupabaseConfigured && supabase && checkIsOnline()) {
+  if (isSupabaseConfigured && supabase) {
     try {
-      const { data, error } = await supabase
+      // 1. Cargar estudiantes reales desde public.estudiantes
+      const { data: estudiantesData, error: estErr } = await supabase
         .from('estudiantes')
-        .select('*');
+        .select('*')
+        .order('nombre_completo', { ascending: true });
 
-      if (!error && data && data.length > 0) {
-        saveLocalEstudiantes(data as Estudiante[]);
-        return data as Estudiante[];
+      if (estErr) {
+        throw new Error(`Error en public.estudiantes: ${estErr.message}`);
       }
+
+      if (!estudiantesData || estudiantesData.length === 0) {
+        saveLocalEstudiantes([]);
+        return [];
+      }
+
+      // 2. Cargar sedes, grupos y programas reales para resolver nombres
+      const [sedesRes, gruposRes, programasRes] = await Promise.all([
+        supabase.from('sedes').select('id, nombre'),
+        supabase.from('grupos').select('id, nombre, sede_id'),
+        supabase.from('programas').select('id, nombre, codigo')
+      ]);
+
+      const sedeMap = new Map<string, string>();
+      (sedesRes.data || []).forEach((s: { id: string; nombre: string }) => {
+        sedeMap.set(s.id, s.nombre);
+      });
+
+      const grupoMap = new Map<string, string>();
+      (gruposRes.data || []).forEach((g: { id: string; nombre: string }) => {
+        grupoMap.set(g.id, g.nombre);
+      });
+
+      const programaMap = new Map<string, { nombre: string; codigo: string }>();
+      (programasRes.data || []).forEach((p: { id: string; nombre: string; codigo: string }) => {
+        programaMap.set(p.id, { nombre: p.nombre, codigo: p.codigo });
+      });
+
+      // 3. Mapear cada estudiante resolviendo sede_nombre, grupo_nombre y programa_codigo
+      const resolvedList: Estudiante[] = estudiantesData.map((e: any) => {
+        const progInfo = e.programa_id ? programaMap.get(e.programa_id) : undefined;
+        return {
+          ...e,
+          sede_nombre: (e.sede_id ? sedeMap.get(e.sede_id) : undefined) || 'Sede sin asignar',
+          grupo_nombre: (e.grupo_id ? grupoMap.get(e.grupo_id) : undefined) || 'Grupo sin asignar',
+          programa_nombre: progInfo?.nombre || e.carrera_especialidad || 'Sin programa',
+          programa_codigo: progInfo?.codigo || e.programa_codigo || 'GENERAL'
+        };
+      });
+
+      saveLocalEstudiantes(resolvedList);
+      return resolvedList;
     } catch (e) {
-      console.warn('Error al obtener estudiantes de Supabase:', e);
+      console.error('Error al obtener estudiantes de Supabase:', e);
+      throw e;
     }
   }
 
-  return local;
+  return getLocalEstudiantes();
 }
