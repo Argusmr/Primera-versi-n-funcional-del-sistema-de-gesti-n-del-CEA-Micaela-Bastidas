@@ -82,7 +82,7 @@ export const DirectorDashboard: React.FC<DirectorDashboardProps> = ({
     setFetchError(null);
 
     try {
-      // Execute parallel queries directly against Supabase
+      // Execute parallel queries directly against Supabase without ambiguous embedded joins
       const [
         docentesRes,
         estudiantesRes,
@@ -92,7 +92,7 @@ export const DirectorDashboard: React.FC<DirectorDashboardProps> = ({
         // 1. Total docentes: public.perfiles con rol='docente' y activo=true
         supabase
           .from('perfiles')
-          .select('*, sedes(nombre), horarios(nombre)')
+          .select('*')
           .eq('rol', 'docente')
           .eq('activo', true)
           .order('nombre_completo', { ascending: true }),
@@ -103,14 +103,14 @@ export const DirectorDashboard: React.FC<DirectorDashboardProps> = ({
           .select('id, codigo_interno, nombre_completo, sexo, estado, sede_id, grupo_id, programa_id')
           .eq('estado', 'activo'),
 
-        // 3. Resumen asistencia docente de hoy: public.asistencias_docentes filtrando por fecha_laboral de hoy
+        // 3. Resumen asistencia docente de hoy: public.asistencias_docentes sin embedded join
         supabase
           .from('asistencias_docentes')
-          .select('*, perfiles(nombre_completo, sede_id, sedes(nombre))')
+          .select('*')
           .eq('fecha_laboral', todayIsoDate)
           .order('created_at', { ascending: false }),
 
-        // 4. Sedes activas para pestañas dinámicas
+        // 4. Sedes activas para nombres y pestañas dinámicas
         supabase
           .from('sedes')
           .select('*')
@@ -128,24 +128,59 @@ export const DirectorDashboard: React.FC<DirectorDashboardProps> = ({
         throw new Error(`Error en public.asistencias_docentes: ${asistenciasRes.error.message}`);
       }
 
-      // Map joined fields for docentes
+      const sedesData = (sedesRes.data || []) as Sede[];
+      const sedesMap = new Map<string, string>();
+      sedesData.forEach(s => sedesMap.set(s.id, s.nombre));
+
+      // Map docentes with sede_nombre resolved in memory
       const mappedDocentes: Perfil[] = (docentesRes.data || []).map((d: any) => ({
         ...d,
-        sede_nombre: d.sedes?.nombre || d.sede_nombre || 'Sin Sede'
+        sede_nombre: (d.sede_id && sedesMap.get(d.sede_id)) || d.sede_nombre || 'Sin Sede'
       }));
 
-      // Map joined fields for asistencias_docentes
-      const mappedAsistencias: AsistenciaDocente[] = (asistenciasRes.data || []).map((a: any) => ({
-        ...a,
-        docente_nombre: a.perfiles?.nombre_completo || 'Docente sin nombre',
-        sede_nombre: a.perfiles?.sedes?.nombre || 'Sede sin asignar',
-        sede_id: a.perfiles?.sede_id || a.sede_id
-      }));
+      // Create lookup map of all docentes for fast in-memory joins
+      const docentesMap = new Map<string, Perfil>();
+      mappedDocentes.forEach(d => docentesMap.set(d.id, d));
+
+      // If any attendance record belongs to a teacher not active or in docentes list, fetch their basic profile
+      const rawAsistencias = asistenciasRes.data || [];
+      const missingDocenteIds = Array.from(
+        new Set(rawAsistencias.map((a: any) => a.docente_id).filter((id: string) => id && !docentesMap.has(id)))
+      );
+
+      if (missingDocenteIds.length > 0) {
+        const extraDocentesRes = await supabase
+          .from('perfiles')
+          .select('*')
+          .in('id', missingDocenteIds);
+
+        if (extraDocentesRes.data) {
+          extraDocentesRes.data.forEach((d: any) => {
+            const sedeNom = (d.sede_id && sedesMap.get(d.sede_id)) || d.sede_nombre || 'Sin Sede';
+            docentesMap.set(d.id, { ...d, sede_nombre: sedeNom });
+          });
+        }
+      }
+
+      // Map joined fields for asistencias_docentes in memory by UUID
+      const mappedAsistencias: AsistenciaDocente[] = rawAsistencias.map((a: any) => {
+        const docente = a.docente_id ? docentesMap.get(a.docente_id) : null;
+        const docenteNombre = docente?.nombre_completo || 'Docente sin nombre';
+        const docenteSedeId = docente?.sede_id || a.sede_id;
+        const docenteSedeNombre = (docenteSedeId && sedesMap.get(docenteSedeId)) || docente?.sede_nombre || 'Sede sin asignar';
+
+        return {
+          ...a,
+          docente_nombre: docenteNombre,
+          sede_nombre: docenteSedeNombre,
+          sede_id: docenteSedeId
+        };
+      });
 
       setDocentes(mappedDocentes);
       setEstudiantes((estudiantesRes.data || []) as Estudiante[]);
       setAsistenciasHoy(mappedAsistencias);
-      setSedesList((sedesRes.data || []) as Sede[]);
+      setSedesList(sedesData);
     } catch (err: any) {
       console.error('Error al cargar datos del Director Dashboard:', err);
       setFetchError(err.message || 'Error al conectar con la base de datos.');
