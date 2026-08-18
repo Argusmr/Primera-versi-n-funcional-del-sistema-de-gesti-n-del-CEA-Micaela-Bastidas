@@ -12,7 +12,11 @@ import {
   Search,
   CheckSquare,
   Sparkles,
-  AlertCircle
+  AlertCircle,
+  Calendar,
+  ChevronDown,
+  ChevronUp,
+  RefreshCw
 } from 'lucide-react';
 import { Perfil, Estudiante, Grupo, AsistenciaEstudiante } from '../types';
 import { saveOfflineEstudianteAsistencia } from '../lib/db';
@@ -25,12 +29,33 @@ interface StudentsViewProps {
   onOpenAddStudentModal: () => void;
 }
 
+interface SesionHistorialItem {
+  id: string;
+  fecha: string;
+  materia: string;
+  grupo_id: string;
+  grupo_nombre: string;
+  presentes: number;
+  atrasos: number;
+  faltas: number;
+  licencias: number;
+  total: number;
+  porcentaje: number;
+  detalles: Array<{
+    id: string;
+    estudiante_id: string;
+    nombre_completo: string;
+    codigo_interno?: string;
+    estado: 'presente' | 'atraso' | 'falta' | 'licencia';
+  }>;
+}
+
 export const StudentsView: React.FC<StudentsViewProps> = ({
   user,
   isOnline,
   onOpenAddStudentModal
 }) => {
-  const [activeSubTab, setActiveSubTab] = useState<'asistencia' | 'nomina'>(
+  const [activeSubTab, setActiveSubTab] = useState<'asistencia' | 'nomina' | 'historial'>(
     user.rol === 'superadmin' ? 'nomina' : 'asistencia'
   );
 
@@ -64,6 +89,12 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
   const [nominaStudents, setNominaStudents] = useState<Estudiante[]>([]);
   const [loadingNomina, setLoadingNomina] = useState<boolean>(false);
   const [nominaError, setNominaError] = useState<string | null>(null);
+
+  // Historial State from Supabase (Only for authenticated teacher: docente_id = user.id)
+  const [historialSesiones, setHistorialSesiones] = useState<SesionHistorialItem[]>([]);
+  const [loadingHistorial, setLoadingHistorial] = useState<boolean>(false);
+  const [historialError, setHistorialError] = useState<string | null>(null);
+  const [expandedSessionIds, setExpandedSessionIds] = useState<Set<string>>(new Set());
 
   // 1. Cargar grupos asignados al docente autenticado
   const fetchAssignedGroups = async () => {
@@ -298,12 +329,125 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
     }
   };
 
-  // Efecto para cargar asignaciones al activar pestaña asistencia
+  // 4. Cargar historial real de sesiones de clase del docente autenticado
+  const fetchHistorialSesiones = async () => {
+    if (!isSupabaseConfigured || !supabase) {
+      setHistorialSesiones([]);
+      setLoadingHistorial(false);
+      return;
+    }
+
+    setLoadingHistorial(true);
+    setHistorialError(null);
+
+    try {
+      const { data, error } = await supabase
+        .from('sesiones_clase')
+        .select(`
+          id,
+          fecha,
+          materia,
+          grupo_id,
+          created_at,
+          grupos (
+            id,
+            nombre
+          ),
+          asistencias_estudiantes (
+            id,
+            estado,
+            estudiante_id,
+            estudiantes (
+              id,
+              nombre_completo,
+              codigo_interno
+            )
+          )
+        `)
+        .eq('docente_id', user.id)
+        .order('fecha', { ascending: false });
+
+      if (error) {
+        throw error;
+      }
+
+      const items: SesionHistorialItem[] = (data || []).map((s: any) => {
+        const grupoNombre = s.grupos?.nombre || 'Grupo sin nombre';
+        const asistenciasList = Array.isArray(s.asistencias_estudiantes) ? s.asistencias_estudiantes : [];
+
+        let presentes = 0;
+        let atrasos = 0;
+        let faltas = 0;
+        let licencias = 0;
+
+        const detalles = asistenciasList.map((a: any) => {
+          const estado = a.estado as 'presente' | 'atraso' | 'falta' | 'licencia';
+          if (estado === 'presente') presentes++;
+          else if (estado === 'atraso') atrasos++;
+          else if (estado === 'falta') faltas++;
+          else if (estado === 'licencia') licencias++;
+
+          return {
+            id: a.id,
+            estudiante_id: a.estudiante_id,
+            nombre_completo: a.estudiantes?.nombre_completo || 'Estudiante',
+            codigo_interno: a.estudiantes?.codigo_interno || undefined,
+            estado
+          };
+        });
+
+        // Ordenar detalles alfabéticamente por nombre de estudiante
+        detalles.sort((a: any, b: any) => a.nombre_completo.localeCompare(b.nombre_completo));
+
+        const total = asistenciasList.length;
+        const porcentaje = total > 0 ? Math.round(((presentes + atrasos) / total) * 100) : 0;
+
+        return {
+          id: s.id,
+          fecha: s.fecha,
+          materia: s.materia,
+          grupo_id: s.grupo_id,
+          grupo_nombre: grupoNombre,
+          presentes,
+          atrasos,
+          faltas,
+          licencias,
+          total,
+          porcentaje,
+          detalles
+        };
+      });
+
+      setHistorialSesiones(items);
+    } catch (err: any) {
+      console.error('Error al cargar historial de sesiones de clase desde Supabase:', err);
+      setHistorialError(err.message || 'Error al consultar historial en Supabase.');
+      setHistorialSesiones([]);
+    } finally {
+      setLoadingHistorial(false);
+    }
+  };
+
+  const toggleSessionExpanded = (id: string) => {
+    setExpandedSessionIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
+
+  // Efecto para cargar asignaciones o historial al activar la subpestaña
   useEffect(() => {
     if (activeSubTab === 'asistencia') {
       fetchAssignedGroups();
     } else if (activeSubTab === 'nomina') {
       fetchNomina();
+    } else if (activeSubTab === 'historial') {
+      fetchHistorialSesiones();
     }
   }, [activeSubTab, user.id]);
 
@@ -331,16 +475,20 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
   }, [fechaClase]);
 
   useEffect(() => {
-    const handleStudentAdded = () => {
+    const handleRefresh = () => {
       if (activeSubTab === 'nomina') {
         fetchNomina();
       } else if (activeSubTab === 'asistencia' && selectedGrupoId) {
         fetchStudentsForGroup(selectedGrupoId, fechaClase, materiaClase);
+      } else if (activeSubTab === 'historial') {
+        fetchHistorialSesiones();
       }
     };
-    window.addEventListener('estudiante-added', handleStudentAdded);
+    window.addEventListener('estudiante-added', handleRefresh);
+    window.addEventListener('asistencia-estudiantes-guardada', handleRefresh);
     return () => {
-      window.removeEventListener('estudiante-added', handleStudentAdded);
+      window.removeEventListener('estudiante-added', handleRefresh);
+      window.removeEventListener('asistencia-estudiantes-guardada', handleRefresh);
     };
   }, [activeSubTab, selectedGrupoId, fechaClase, materiaClase]);
 
@@ -586,6 +734,14 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
           }`}
         >
           Nómina de Inscritos
+        </button>
+        <button
+          onClick={() => setActiveSubTab('historial')}
+          className={`flex-1 py-2.5 rounded-xl text-xs font-extrabold transition-all ${
+            activeSubTab === 'historial' ? 'bg-[#00A651] text-white shadow-sm' : 'text-slate-700'
+          }`}
+        >
+          Historial
         </button>
       </div>
 
@@ -878,7 +1034,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
             </div>
           )}
         </div>
-      ) : (
+      ) : activeSubTab === 'nomina' ? (
         /* ================= NOMINA DE INSCRITOS VIEW ================= */
         <div className="space-y-4">
           <div className="flex items-center justify-between gap-2">
@@ -980,6 +1136,173 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
                   </div>
                 </div>
               ))}
+            </div>
+          )}
+        </div>
+      ) : (
+        /* ================= HISTORIAL DE ASISTENCIA VIEW ================= */
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="font-extrabold text-base text-[#17324D]">Historial de Asistencia</h3>
+              <p className="text-xs text-slate-500 font-medium">Sesiones registradas por usted</p>
+            </div>
+            <button
+              onClick={fetchHistorialSesiones}
+              disabled={loadingHistorial}
+              className="h-9 px-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl flex items-center gap-1.5 transition-all disabled:opacity-50"
+              title="Recargar historial"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 text-slate-600 ${loadingHistorial ? 'animate-spin' : ''}`} />
+              <span>Actualizar</span>
+            </button>
+          </div>
+
+          {/* Error Message */}
+          {historialError && (
+            <div className="p-4 bg-red-50 border border-red-200 text-red-700 rounded-3xl text-xs space-y-2">
+              <div className="flex items-center gap-2 font-bold">
+                <AlertCircle className="w-4 h-4 text-red-500 shrink-0" />
+                <span>Error al cargar historial: {historialError}</span>
+              </div>
+              <button
+                type="button"
+                onClick={fetchHistorialSesiones}
+                className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl text-[11px] transition-colors"
+              >
+                Reintentar
+              </button>
+            </div>
+          )}
+
+          {/* Loading state */}
+          {loadingHistorial && (
+            <div className="p-10 text-center bg-white rounded-3xl border border-slate-200 text-slate-500 font-bold text-xs space-y-2">
+              <RefreshCw className="w-8 h-8 text-[#00A651] animate-spin mx-auto" />
+              <p>Cargando historial de asistencias...</p>
+            </div>
+          )}
+
+          {/* Empty state */}
+          {!loadingHistorial && !historialError && historialSesiones.length === 0 && (
+            <div className="p-10 text-center bg-white rounded-3xl border border-slate-200 shadow-xs space-y-2">
+              <Calendar className="w-10 h-10 text-slate-300 mx-auto" />
+              <p className="font-bold text-sm text-slate-700">Aún no tiene asistencias estudiantiles registradas.</p>
+              <p className="text-xs text-slate-400">
+                Las sesiones de clase guardadas en "Asistencia Diaria" aparecerán aquí.
+              </p>
+            </div>
+          )}
+
+          {/* Session Cards */}
+          {!loadingHistorial && !historialError && historialSesiones.length > 0 && (
+            <div className="space-y-3">
+              {historialSesiones.map((s) => {
+                const isExpanded = expandedSessionIds.has(s.id);
+                return (
+                  <div
+                    key={s.id}
+                    className="p-4 bg-white rounded-3xl border border-slate-200 shadow-xs space-y-3 transition-all"
+                  >
+                    {/* Header & Click to toggle */}
+                    <div
+                      onClick={() => toggleSessionExpanded(s.id)}
+                      className="cursor-pointer space-y-2"
+                    >
+                      <div className="flex items-start justify-between">
+                        <div>
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[10px] font-bold text-emerald-800 bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-200">
+                              {s.grupo_nombre}
+                            </span>
+                            <span className="text-[10px] font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">
+                              {s.fecha}
+                            </span>
+                          </div>
+                          <h4 className="font-extrabold text-base text-[#17324D] mt-1">{s.materia}</h4>
+                        </div>
+                        <div className="text-right flex flex-col items-end">
+                          <span
+                            className={`px-2.5 py-1 rounded-xl text-xs font-extrabold ${
+                              s.porcentaje >= 80
+                                ? 'bg-emerald-100 text-emerald-800'
+                                : s.porcentaje >= 60
+                                ? 'bg-amber-100 text-amber-800'
+                                : 'bg-red-100 text-red-800'
+                            }`}
+                          >
+                            {s.porcentaje}%
+                          </span>
+                          <span className="text-[9px] text-slate-400 font-bold mt-0.5">Asistencia</span>
+                        </div>
+                      </div>
+
+                      {/* Stat badges */}
+                      <div className="grid grid-cols-4 gap-1.5 pt-1 text-center">
+                        <div className="p-2 bg-emerald-50 rounded-xl border border-emerald-100">
+                          <span className="text-[9px] font-bold text-emerald-700 block uppercase">Pres.</span>
+                          <strong className="text-sm text-emerald-800 font-extrabold">{s.presentes}</strong>
+                        </div>
+                        <div className="p-2 bg-amber-50 rounded-xl border border-amber-100">
+                          <span className="text-[9px] font-bold text-amber-700 block uppercase">Atr.</span>
+                          <strong className="text-sm text-amber-800 font-extrabold">{s.atrasos}</strong>
+                        </div>
+                        <div className="p-2 bg-red-50 rounded-xl border border-red-100">
+                          <span className="text-[9px] font-bold text-red-700 block uppercase">Falt.</span>
+                          <strong className="text-sm text-red-800 font-extrabold">{s.faltas}</strong>
+                        </div>
+                        <div className="p-2 bg-blue-50 rounded-xl border border-blue-100">
+                          <span className="text-[9px] font-bold text-blue-700 block uppercase">Lic.</span>
+                          <strong className="text-sm text-blue-800 font-extrabold">{s.licencias}</strong>
+                        </div>
+                      </div>
+
+                      {/* Expand / collapse hint */}
+                      <div className="flex items-center justify-center gap-1 text-[11px] font-bold text-slate-400 pt-1">
+                        <span>{isExpanded ? 'Ocultar nómina de la sesión' : `Ver estudiantes (${s.total})`}</span>
+                        {isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                      </div>
+                    </div>
+
+                    {/* Expandable student details */}
+                    {isExpanded && (
+                      <div className="pt-2 border-t border-slate-100 space-y-1.5">
+                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wide block">
+                          Detalle de Estudiantes ({s.detalles.length})
+                        </span>
+                        <div className="space-y-1 max-h-60 overflow-y-auto pr-1">
+                          {s.detalles.map((det) => (
+                            <div
+                              key={det.id}
+                              className="flex items-center justify-between p-2 bg-slate-50 rounded-xl text-xs"
+                            >
+                              <div className="truncate pr-2">
+                                <span className="font-bold text-[#17324D]">{det.nombre_completo}</span>
+                                {det.codigo_interno && (
+                                  <span className="text-[10px] text-slate-400 ml-1">({det.codigo_interno})</span>
+                                )}
+                              </div>
+                              <span
+                                className={`px-2 py-0.5 rounded-lg text-[10px] font-extrabold uppercase shrink-0 ${
+                                  det.estado === 'presente'
+                                    ? 'bg-emerald-100 text-emerald-800'
+                                    : det.estado === 'atraso'
+                                    ? 'bg-amber-100 text-amber-800'
+                                    : det.estado === 'falta'
+                                    ? 'bg-red-100 text-red-800'
+                                    : 'bg-blue-100 text-blue-800'
+                                }`}
+                              >
+                                {det.estado}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
