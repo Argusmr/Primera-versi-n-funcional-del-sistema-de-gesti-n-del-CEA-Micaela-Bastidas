@@ -3,52 +3,84 @@ import { AsistenciaDocente, Estudiante, AlertaEstudiante, Seguimiento, Perfil, R
 
 export function downloadDocenteAttendanceReport(
   records: AsistenciaDocente[],
-  resumenes: ResumenAsistenciaDocenteMensual[],
-  mesAno: string
+  resumenes: ResumenAsistenciaDocenteMensual[] = [],
+  mesAno: string = ''
 ) {
+  if (!records || records.length === 0) {
+    alert('No hay registros de asistencia docente para exportar.');
+    return;
+  }
+
   const wb = XLSX.utils.book_new();
 
-  // Sheet 1: Detalle Diario
-  const detalleData = records.map((r) => ({
-    'Fecha Laboral': r.fecha_laboral,
-    'Docente': r.docente_nombre || 'N/D',
-    'Sede': r.sede_nombre || 'N/D',
-    'Hora Ingreso Oficial': r.hora_ingreso_oficial ? new Date(r.hora_ingreso_oficial).toLocaleTimeString('es-BO') : 'Sin registro',
-    'Hora Salida Oficial': r.hora_salida_oficial ? new Date(r.hora_salida_oficial).toLocaleTimeString('es-BO') : 'Sin registro',
-    'Tiempo Trabajado (hrs)': r.horas_trabajadas,
-    'Estado Jornada': r.estado.toUpperCase(),
-    'Minutos Atraso': r.minutos_atraso,
-    'Minutos Salida Anticipada': r.minutos_salida_anticipada,
-    'Origen Registro': r.origen_registro === 'sin_conexion' ? 'Sin Conexión (Offline)' : 'En Línea',
-    'Hora Sincronización': r.hora_sincronizacion ? new Date(r.hora_sincronizacion).toLocaleString('es-BO') : 'N/A',
-    'Observación': r.observacion || ''
-  }));
+  // Sheet 1: Detalle de Asistencia Docente con las columnas solicitadas
+  const detalleData = records.map((r) => {
+    // Formatear horas de ingreso y salida
+    let ingresoStr = 'Sin registro';
+    if (r.hora_ingreso_oficial) {
+      ingresoStr = r.hora_ingreso_oficial.includes('T')
+        ? new Date(r.hora_ingreso_oficial).toLocaleTimeString('es-BO')
+        : r.hora_ingreso_oficial;
+    } else if (r.hora_ingreso_local) {
+      ingresoStr = r.hora_ingreso_local.includes('T')
+        ? new Date(r.hora_ingreso_local).toLocaleTimeString('es-BO')
+        : r.hora_ingreso_local;
+    }
+
+    let salidaStr = 'Sin registro';
+    if (r.hora_salida_oficial) {
+      salidaStr = r.hora_salida_oficial.includes('T')
+        ? new Date(r.hora_salida_oficial).toLocaleTimeString('es-BO')
+        : r.hora_salida_oficial;
+    } else if (r.hora_salida_local) {
+      salidaStr = r.hora_salida_local.includes('T')
+        ? new Date(r.hora_salida_local).toLocaleTimeString('es-BO')
+        : r.hora_salida_local;
+    }
+
+    return {
+      'Fecha': r.fecha_laboral || '',
+      'Docente': r.docente_nombre || 'Docente sin asignar',
+      'Sede': r.sede_nombre || 'Sede General',
+      'Ingreso': ingresoStr,
+      'Salida': salidaStr,
+      'Minutos de atraso': r.minutos_atraso || 0,
+      'Minutos de salida anticipada': r.minutos_salida_anticipada || 0,
+      'Horas trabajadas': r.horas_trabajadas || 0,
+      'Estado': (r.estado || '').toUpperCase(),
+      'Origen': r.origen_registro === 'sin_conexion' ? 'Sin Conexión (Offline)' : 'En Línea',
+      'Observación': r.observacion || ''
+    };
+  });
 
   const wsDetalle = XLSX.utils.json_to_sheet(detalleData);
-  XLSX.utils.book_append_sheet(wb, wsDetalle, 'Detalle Diario');
+  XLSX.utils.book_append_sheet(wb, wsDetalle, 'Asistencia Docente');
 
-  // Sheet 2: Resumen Mensual
-  const resumenData = resumenes.map((s) => ({
-    'Docente': s.docente_nombre,
-    'Días Programados': s.dias_programados,
-    'Días Asistidos': s.dias_asistidos,
-    'Días Puntuales': s.dias_puntuales,
-    'Atrasos': s.atrasos,
-    'Faltas': s.faltas,
-    'Licencias': s.licencias,
-    'Salidas Anticipadas': s.salidas_anticipadas,
-    'Registros Incompletos': s.registros_incompletos,
-    'Registros Sin Conexión': s.registros_sin_conexion,
-    'Horas Acumuladas': s.horas_trabajadas,
-    '% Asistencia': `${s.porcentaje_asistencia.toFixed(1)}%`,
-    '% Puntualidad': `${s.porcentaje_puntualidad.toFixed(1)}%`
-  }));
+  // Sheet 2: Resumen Mensual (si se provee)
+  if (resumenes && resumenes.length > 0) {
+    const resumenData = resumenes.map((s) => ({
+      'Docente': s.docente_nombre,
+      'Días Programados': s.dias_programados,
+      'Días Asistidos': s.dias_asistidos,
+      'Días Puntuales': s.dias_puntuales,
+      'Atrasos': s.atrasos,
+      'Faltas': s.faltas,
+      'Licencias': s.licencias,
+      'Salidas Anticipadas': s.salidas_anticipadas,
+      'Registros Incompletos': s.registros_incompletos,
+      'Registros Sin Conexión': s.registros_sin_conexion,
+      'Horas Acumuladas': s.horas_trabajadas,
+      '% Asistencia': `${s.porcentaje_asistencia.toFixed(1)}%`,
+      '% Puntualidad': `${s.porcentaje_puntualidad.toFixed(1)}%`
+    }));
 
-  const wsResumen = XLSX.utils.json_to_sheet(resumenData);
-  XLSX.utils.book_append_sheet(wb, wsResumen, 'Resumen Mensual');
+    const wsResumen = XLSX.utils.json_to_sheet(resumenData);
+    XLSX.utils.book_append_sheet(wb, wsResumen, 'Resumen Mensual');
+  }
 
-  // Download file
-  XLSX.writeFile(wb, `Reporte_Asistencia_Docente_${mesAno.replace('-', '_')}.xlsx`);
+  // Nombre de archivo con fecha o mes
+  const fileSuffix = mesAno ? mesAno.replace('-', '_') : new Date().toISOString().split('T')[0];
+  XLSX.writeFile(wb, `Reporte_Asistencia_Docente_${fileSuffix}.xlsx`);
 }
 
 export function downloadStudentEnrollmentReport(estudiantes: Estudiante[], sedeFiltro: string = 'Todas') {

@@ -25,9 +25,8 @@ import {
   UserCheck2,
   FileText
 } from 'lucide-react';
-import { Perfil, Estudiante, Programa, NivelEducativo, AsistenciaDocente, EstadoAsistenciaDocente } from '../types';
+import { Perfil, Estudiante, Programa, NivelEducativo, AsistenciaDocente, EstadoAsistenciaDocente, ResumenAsistenciaDocenteMensual } from '../types';
 import {
-  MOCK_ASISTENCIAS_DOCENTES,
   MOCK_ALERTAS,
   MOCK_SEGUIMIENTOS
 } from '../lib/mockData';
@@ -710,22 +709,80 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ user }) => {
 
   // Downloads for planillas
   const handleDownloadAsistenciaDocente = () => {
-    downloadDocenteAttendanceReport(MOCK_ASISTENCIAS_DOCENTES, [{
-      docente_id: 'usr-doc-1',
-      docente_nombre: 'Lic. Elena Ramos Mamani',
-      dias_programados: 22,
-      dias_asistidos: 20,
-      dias_puntuales: 18,
-      atrasos: 2,
-      faltas: 0,
-      licencias: 2,
-      salidas_anticipadas: 0,
-      registros_incompletos: 0,
-      registros_sin_conexion: 1,
-      horas_trabajadas: 72.5,
-      porcentaje_asistencia: 90.9,
-      porcentaje_puntualidad: 90.0
-    }], selectedMonth);
+    if (asistenciasDocentesList.length === 0) {
+      alert('No hay registros de asistencia docente para exportar.');
+      return;
+    }
+
+    // Calcular resumen mensual por docente con base en los registros reales filtrados
+    const resumenMap = new Map<string, ResumenAsistenciaDocenteMensual>();
+
+    asistenciasDocentesList.forEach(a => {
+      const docId = a.docente_id;
+      const docNombre = a.docente_nombre || 'Docente sin asignar';
+
+      if (!resumenMap.has(docId)) {
+        resumenMap.set(docId, {
+          docente_id: docId,
+          docente_nombre: docNombre,
+          dias_programados: 0,
+          dias_asistidos: 0,
+          dias_puntuales: 0,
+          atrasos: 0,
+          faltas: 0,
+          licencias: 0,
+          salidas_anticipadas: 0,
+          registros_incompletos: 0,
+          registros_sin_conexion: 0,
+          horas_trabajadas: 0,
+          porcentaje_asistencia: 0,
+          porcentaje_puntualidad: 0
+        });
+      }
+
+      const item = resumenMap.get(docId)!;
+      item.dias_programados += 1;
+      item.horas_trabajadas += Number(a.horas_trabajadas || 0);
+
+      if (a.origen_registro === 'sin_conexion') {
+        item.registros_sin_conexion += 1;
+      }
+
+      if (a.estado === 'puntual') {
+        item.dias_asistidos += 1;
+        item.dias_puntuales += 1;
+      } else if (a.estado === 'atraso') {
+        item.dias_asistidos += 1;
+        item.atrasos += 1;
+      } else if (a.estado === 'falta') {
+        item.faltas += 1;
+      } else if (a.estado === 'licencia') {
+        item.licencias += 1;
+      } else if (a.estado === 'registro_incompleto') {
+        item.registros_incompletos += 1;
+      } else if (a.estado === 'salida_anticipada') {
+        item.dias_asistidos += 1;
+        item.salidas_anticipadas += 1;
+      }
+    });
+
+    const resumenesList: ResumenAsistenciaDocenteMensual[] = Array.from(resumenMap.values()).map(r => {
+      const pctAsistencia = r.dias_programados > 0
+        ? Number(((r.dias_asistidos / r.dias_programados) * 100).toFixed(1))
+        : 0;
+      const pctPuntualidad = r.dias_asistidos > 0
+        ? Number(((r.dias_puntuales / r.dias_asistidos) * 100).toFixed(1))
+        : 0;
+      return {
+        ...r,
+        horas_trabajadas: Number(r.horas_trabajadas.toFixed(2)),
+        porcentaje_asistencia: pctAsistencia,
+        porcentaje_puntualidad: pctPuntualidad
+      };
+    });
+
+    const mesExport = docenteFilterMes || selectedMonth || '';
+    downloadDocenteAttendanceReport(asistenciasDocentesList, resumenesList, mesExport);
   };
 
   const handleDownloadInscritos = () => {
