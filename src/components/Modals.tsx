@@ -449,6 +449,7 @@ export const AddStudentModal: React.FC<{ onClose: () => void; onSuccess: () => v
 }) => {
   const [nombre, setNombre] = useState('');
   const [documento, setDocumento] = useState('');
+  const [sexo, setSexo] = useState<'Masculino' | 'Femenino' | ''>('');
   const [grupoId, setGrupoId] = useState('');
   const [gruposList, setGruposList] = useState<Grupo[]>([]);
   const [loadingCatalogos, setLoadingCatalogos] = useState<boolean>(true);
@@ -537,6 +538,11 @@ export const AddStudentModal: React.FC<{ onClose: () => void; onSuccess: () => v
       return;
     }
 
+    if (!sexo) {
+      setErrMsg('Debe seleccionar el sexo del estudiante (Masculino / Femenino).');
+      return;
+    }
+
     if (!grupoId) {
       setErrMsg('Debe seleccionar un grupo asignado válido de la base de datos.');
       return;
@@ -562,6 +568,7 @@ export const AddStudentModal: React.FC<{ onClose: () => void; onSuccess: () => v
           codigo_interno: codigoInterno,
           nombre_completo: nombre.trim(),
           documento: documento.trim() || null,
+          sexo: sexo,
           programa_id: selectedGroup.programa_id,
           sede_id: selectedGroup.sede_id,
           carrera_especialidad: selectedGroup.carrera_especialidad || 'General',
@@ -654,7 +661,7 @@ export const AddStudentModal: React.FC<{ onClose: () => void; onSuccess: () => v
               />
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
               <div>
                 <label htmlFor="input-student-documento" className="block font-bold text-slate-700 mb-1">CI / Documento</label>
                 <input
@@ -666,6 +673,22 @@ export const AddStudentModal: React.FC<{ onClose: () => void; onSuccess: () => v
                   className="w-full h-11 px-3 border border-slate-300 rounded-xl font-medium"
                 />
               </div>
+
+              <div>
+                <label htmlFor="select-student-sexo" className="block font-bold text-slate-700 mb-1">Sexo / Género *</label>
+                <select
+                  id="select-student-sexo"
+                  value={sexo}
+                  onChange={e => setSexo(e.target.value as 'Masculino' | 'Femenino')}
+                  className="w-full h-11 px-3 border border-slate-300 rounded-xl font-bold bg-slate-50 text-slate-900"
+                  required
+                >
+                  <option value="">Seleccione...</option>
+                  <option value="Masculino">Masculino</option>
+                  <option value="Femenino">Femenino</option>
+                </select>
+              </div>
+
               <div>
                 <label htmlFor="select-student-grupo" className="block font-bold text-slate-700 mb-1">Grupo Asignado *</label>
                 <select
@@ -700,7 +723,7 @@ export const AddStudentModal: React.FC<{ onClose: () => void; onSuccess: () => v
               </button>
               <button
                 type="submit"
-                disabled={loading || loadingCatalogos || !grupoId || gruposList.length === 0}
+                disabled={loading || loadingCatalogos || !sexo || !grupoId || gruposList.length === 0}
                 className="flex-1 h-12 bg-[#00A651] text-white rounded-xl font-bold hover:bg-[#008d44] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {loading ? 'Guardando...' : 'Guardar Estudiante'}

@@ -359,8 +359,8 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ user }) => {
     return dbGrupos.filter(g => g.sede_id === historiaSedeId);
   }, [dbGrupos, historiaSedeId]);
 
-  // Filter students dynamically based on current filters
-  const filteredEstudiantes = useMemo(() => {
+  // Base collection: Applies Sede + Programa + Nivel + Gestión (ignoring filterSexo)
+  const baseEstudiantes = useMemo(() => {
     return estudiantes.filter(e => {
       // Filter Sede (comparing exact UUID)
       if (filterSede !== 'Todas' && e.sede_id !== filterSede) {
@@ -383,13 +383,6 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ user }) => {
         }
       }
 
-      // Filter Sexo (Hombres, Mujeres)
-      if (filterSexo !== 'Todos') {
-        const sexoVal = (e.sexo || '').toLowerCase();
-        if (filterSexo === 'Masculino' && !sexoVal.startsWith('m')) return false;
-        if (filterSexo === 'Femenino' && !sexoVal.startsWith('f')) return false;
-      }
-
       // Filter Gestión
       if (filterGestion !== 'Todas') {
         const gest = e.gestion || '2026';
@@ -398,50 +391,84 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ user }) => {
 
       return true;
     });
-  }, [estudiantes, filterSede, filterPrograma, filterNivel, filterSexo, filterGestion]);
+  }, [estudiantes, filterSede, filterPrograma, filterNivel, filterGestion]);
 
-  // Statistical calculations
+  // Filtered collection: Takes baseEstudiantes and applies filterSexo for detailed listing and views
+  const filteredEstudiantes = useMemo(() => {
+    return baseEstudiantes.filter(e => {
+      // Filter Sexo (Masculino, Femenino, Sin especificar)
+      if (filterSexo !== 'Todos') {
+        const sexoVal = (e.sexo || '').trim();
+        if (filterSexo === 'Masculino' && sexoVal !== 'Masculino') return false;
+        if (filterSexo === 'Femenino' && sexoVal !== 'Femenino') return false;
+        if (filterSexo === 'SinEspecificar' && (sexoVal === 'Masculino' || sexoVal === 'Femenino')) return false;
+      }
+
+      return true;
+    });
+  }, [baseEstudiantes, filterSexo]);
+
+  // Statistical calculations on filteredEstudiantes
   const totalInscritos = filteredEstudiantes.length;
   const activos = filteredEstudiantes.filter(e => e.estado === 'activo').length;
   const inactivos = filteredEstudiantes.filter(e => e.estado !== 'activo').length;
 
-  const hombres = filteredEstudiantes.filter(e => (e.sexo || '').toLowerCase().startsWith('m')).length;
-  const mujeres = filteredEstudiantes.filter(e => (e.sexo || '').toLowerCase().startsWith('f')).length;
-
-  // Percentage calculations
+  // Percentage calculations for general population
   const percentActivos = totalInscritos > 0 ? Math.round((activos / totalInscritos) * 100) : 0;
   const percentInactivos = totalInscritos > 0 ? Math.round((inactivos / totalInscritos) * 100) : 0;
-  const percentHombres = totalInscritos > 0 ? Math.round((hombres / totalInscritos) * 100) : 0;
-  const percentMujeres = totalInscritos > 0 ? Math.round((mujeres / totalInscritos) * 100) : 0;
 
-  // Breakdown by Program
+  // Sex distribution calculated strictly on baseEstudiantes (independent of filterSexo)
+  const totalBase = baseEstudiantes.length;
+  const hombres = baseEstudiantes.filter(e => (e.sexo || '').trim() === 'Masculino').length;
+  const mujeres = baseEstudiantes.filter(e => (e.sexo || '').trim() === 'Femenino').length;
+  const sinSexo = baseEstudiantes.filter(e => {
+    const s = (e.sexo || '').trim();
+    return s !== 'Masculino' && s !== 'Femenino';
+  }).length;
+
+  const percentHombres = totalBase > 0 ? Math.round((hombres / totalBase) * 100) : 0;
+  const percentMujeres = totalBase > 0 ? Math.round((mujeres / totalBase) * 100) : 0;
+  const percentSinSexo = totalBase > 0 ? Math.round((sinSexo / totalBase) * 100) : 0;
+
+  // Breakdown by Program (Construido dinámicamente desde estudiantes reales)
   const programCounts = useMemo(() => {
     const map: Record<string, number> = {};
-    // Ensure all active programs are initialized with 0
-    programas.filter(p => p.activo).forEach(p => {
-      map[p.codigo] = 0;
-    });
 
     filteredEstudiantes.forEach(e => {
-      const code = e.programa_codigo || e.programa_nombre || 'OTRO';
+      const code = e.programa_codigo || e.programa_nombre || 'Sin Programa';
       map[code] = (map[code] || 0) + 1;
     });
     return map;
-  }, [filteredEstudiantes, programas]);
+  }, [filteredEstudiantes]);
 
-  // Breakdown by Level
+  // Breakdown by Level (Construido dinámicamente desde estudiantes reales)
   const levelCounts = useMemo(() => {
     const map: Record<string, number> = {};
-    niveles.filter(n => n.activo).forEach(n => {
-      map[n.nombre] = 0;
-    });
 
     filteredEstudiantes.forEach(e => {
-      const niv = e.nivel || 'Sin Nivel';
+      const niv = e.nivel || 'Sin Nivel Asignado';
       map[niv] = (map[niv] || 0) + 1;
     });
     return map;
-  }, [filteredEstudiantes, niveles]);
+  }, [filteredEstudiantes]);
+
+  // Dynamic programs and levels derived from real students for filters
+  const availableProgramas = useMemo(() => {
+    const set = new Set<string>();
+    estudiantes.forEach(e => {
+      const code = e.programa_codigo || e.programa_nombre;
+      if (code) set.add(code);
+    });
+    return Array.from(set).sort();
+  }, [estudiantes]);
+
+  const availableNiveles = useMemo(() => {
+    const set = new Set<string>();
+    estudiantes.forEach(e => {
+      if (e.nivel) set.add(e.nivel);
+    });
+    return Array.from(set).sort();
+  }, [estudiantes]);
 
   // Breakdown by Sede y Grupo
   const sedeGrupoList = useMemo(() => {
@@ -872,8 +899,8 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ user }) => {
                   className="w-full h-10 px-2.5 bg-slate-50 border border-slate-300 rounded-xl outline-none font-medium text-slate-900"
                 >
                   <option value="Todos">Todos los Programas</option>
-                  {programas.map(p => (
-                    <option key={p.id} value={p.codigo}>{p.codigo} – {p.nombre}</option>
+                  {availableProgramas.map(progCode => (
+                    <option key={progCode} value={progCode}>{progCode}</option>
                   ))}
                 </select>
               </div>
@@ -887,8 +914,8 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ user }) => {
                   className="w-full h-10 px-2.5 bg-slate-50 border border-slate-300 rounded-xl outline-none font-medium text-slate-900"
                 >
                   <option value="Todos">Todos los Niveles</option>
-                  {niveles.map(n => (
-                    <option key={n.id} value={n.nombre}>{n.nombre}</option>
+                  {availableNiveles.map(niv => (
+                    <option key={niv} value={niv}>{niv}</option>
                   ))}
                 </select>
               </div>
@@ -902,8 +929,9 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ user }) => {
                   className="w-full h-10 px-2.5 bg-slate-50 border border-slate-300 rounded-xl outline-none font-medium text-slate-900"
                 >
                   <option value="Todos">Todos</option>
-                  <option value="Masculino">Hombres / Varones</option>
-                  <option value="Femenino">Mujeres</option>
+                  <option value="Masculino">Masculino / Varones</option>
+                  <option value="Femenino">Femenino / Mujeres</option>
+                  <option value="SinEspecificar">Sin especificar</option>
                 </select>
               </div>
 
@@ -968,16 +996,21 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ user }) => {
               </div>
               <div className="grid grid-cols-2 gap-2 text-center pt-1">
                 <div className="p-2 bg-blue-50 border border-blue-200 rounded-2xl">
-                  <span className="text-[10px] font-extrabold text-blue-700 block uppercase">Hombres</span>
+                  <span className="text-[10px] font-extrabold text-blue-700 block uppercase">Masculino</span>
                   <strong className="text-xl font-black text-blue-900">{hombres}</strong>
                   <span className="text-[10px] text-blue-600 font-bold block">({percentHombres}%)</span>
                 </div>
                 <div className="p-2 bg-pink-50 border border-pink-200 rounded-2xl">
-                  <span className="text-[10px] font-extrabold text-pink-700 block uppercase">Mujeres</span>
+                  <span className="text-[10px] font-extrabold text-pink-700 block uppercase">Femenino</span>
                   <strong className="text-xl font-black text-pink-900">{mujeres}</strong>
                   <span className="text-[10px] text-pink-600 font-bold block">({percentMujeres}%)</span>
                 </div>
               </div>
+              {sinSexo > 0 && (
+                <div className="text-[11px] font-medium text-slate-500 text-center bg-slate-50 py-1 px-2 rounded-xl border border-slate-200">
+                  Sin especificar: <strong className="text-slate-800">{sinSexo}</strong> ({percentSinSexo}%)
+                </div>
+              )}
             </div>
 
             {/* Card 4: Sede Activa */}
@@ -987,7 +1020,9 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ user }) => {
                 <Building2 className="w-5 h-5 text-[#00A651]" />
               </div>
               <div>
-                <h4 className="font-extrabold text-base text-[#17324D]">{filterSede}</h4>
+                <h4 className="font-extrabold text-base text-[#17324D]">
+                  {dbSedes.find(s => s.id === filterSede)?.nombre || 'Todas las Sedes'}
+                </h4>
                 <p className="text-xs text-slate-500 font-medium">Programa: {filterPrograma} • Nivel: {filterNivel}</p>
               </div>
               <span className="text-[10px] font-bold text-emerald-800 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200 self-start">
@@ -1009,28 +1044,32 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ user }) => {
               </div>
 
               <div className="space-y-3">
-                {Object.entries(programCounts).map(([code, count]) => {
-                  const cnt = Number(count);
-                  const pct = totalInscritos > 0 ? Math.round((cnt / totalInscritos) * 100) : 0;
-                  return (
-                    <div key={code} className="p-3 bg-slate-50 rounded-2xl border border-slate-200 space-y-1.5">
-                      <div className="flex items-center justify-between text-xs font-bold">
-                        <span className="text-[#17324D] font-extrabold flex items-center gap-1.5">
-                          <span className="px-2 py-0.5 bg-[#00A651] text-white text-[10px] rounded-md font-bold">
-                            {code}
+                {Object.keys(programCounts).length === 0 ? (
+                  <p className="text-xs text-slate-400 font-medium py-3 text-center">Sin datos para los filtros seleccionados</p>
+                ) : (
+                  Object.entries(programCounts).map(([code, count]) => {
+                    const cnt = Number(count);
+                    const pct = totalInscritos > 0 ? Math.round((cnt / totalInscritos) * 100) : 0;
+                    return (
+                      <div key={code} className="p-3 bg-slate-50 rounded-2xl border border-slate-200 space-y-1.5">
+                        <div className="flex items-center justify-between text-xs font-bold">
+                          <span className="text-[#17324D] font-extrabold flex items-center gap-1.5">
+                            <span className="px-2 py-0.5 bg-[#00A651] text-white text-[10px] rounded-md font-bold">
+                              {code}
+                            </span>
                           </span>
-                        </span>
-                        <span className="text-slate-700 font-extrabold">
-                          {count} est. <span className="text-slate-400 font-medium">({pct}%)</span>
-                        </span>
-                      </div>
+                          <span className="text-slate-700 font-extrabold">
+                            {count} est. <span className="text-slate-400 font-medium">({pct}%)</span>
+                          </span>
+                        </div>
 
-                      <div className="w-full bg-slate-200 h-2 rounded-full overflow-hidden">
-                        <div style={{ width: `${pct}%` }} className="bg-[#00A651] h-full transition-all" />
+                        <div className="w-full bg-slate-200 h-2 rounded-full overflow-hidden">
+                          <div style={{ width: `${pct}%` }} className="bg-[#00A651] h-full transition-all" />
+                        </div>
                       </div>
-                    </div>
-                  );
-                })}
+                    );
+                  })
+                )}
               </div>
             </div>
 
@@ -1041,28 +1080,32 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ user }) => {
                   <Layers className="w-5 h-5 text-indigo-600" />
                   <h3 className="font-extrabold text-base text-[#17324D]">Estudiantes por Nivel Educativo</h3>
                 </div>
-                <span className="text-xs font-bold text-slate-400">Incluye elemental/avanzado</span>
+                <span className="text-xs font-bold text-slate-400">Total: {totalInscritos}</span>
               </div>
 
               <div className="space-y-3">
-                {Object.entries(levelCounts).map(([nivelName, count]) => {
-                  const cnt = Number(count);
-                  const pct = totalInscritos > 0 ? Math.round((cnt / totalInscritos) * 100) : 0;
-                  return (
-                    <div key={nivelName} className="p-3 bg-slate-50 rounded-2xl border border-slate-200 space-y-1.5">
-                      <div className="flex items-center justify-between text-xs font-bold">
-                        <span className="text-[#17324D]">{nivelName}</span>
-                        <span className="text-slate-700 font-extrabold">
-                          {count} est. <span className="text-slate-400 font-medium">({pct}%)</span>
-                        </span>
-                      </div>
+                {Object.keys(levelCounts).length === 0 ? (
+                  <p className="text-xs text-slate-400 font-medium py-3 text-center">Sin datos para los filtros seleccionados</p>
+                ) : (
+                  Object.entries(levelCounts).map(([nivelName, count]) => {
+                    const cnt = Number(count);
+                    const pct = totalInscritos > 0 ? Math.round((cnt / totalInscritos) * 100) : 0;
+                    return (
+                      <div key={nivelName} className="p-3 bg-slate-50 rounded-2xl border border-slate-200 space-y-1.5">
+                        <div className="flex items-center justify-between text-xs font-bold">
+                          <span className="text-[#17324D]">{nivelName}</span>
+                          <span className="text-slate-700 font-extrabold">
+                            {count} est. <span className="text-slate-400 font-medium">({pct}%)</span>
+                          </span>
+                        </div>
 
-                      <div className="w-full bg-slate-200 h-2 rounded-full overflow-hidden">
-                        <div style={{ width: `${pct}%` }} className="bg-indigo-600 h-full transition-all" />
+                        <div className="w-full bg-slate-200 h-2 rounded-full overflow-hidden">
+                          <div style={{ width: `${pct}%` }} className="bg-indigo-600 h-full transition-all" />
+                        </div>
                       </div>
-                    </div>
-                  );
-                })}
+                    );
+                  })
+                )}
               </div>
             </div>
           </div>
