@@ -19,9 +19,13 @@ import {
   ChevronUp,
   XCircle,
   AlertCircle,
-  BookOpen
+  BookOpen,
+  Wifi,
+  WifiOff,
+  UserCheck2,
+  FileText
 } from 'lucide-react';
-import { Perfil, Estudiante, Programa, NivelEducativo } from '../types';
+import { Perfil, Estudiante, Programa, NivelEducativo, AsistenciaDocente, EstadoAsistenciaDocente } from '../types';
 import {
   MOCK_ASISTENCIAS_DOCENTES,
   MOCK_ALERTAS,
@@ -68,7 +72,7 @@ interface SesionReportItem {
 }
 
 export const ReportsView: React.FC<ReportsViewProps> = ({ user }) => {
-  const [activeTab, setActiveTab] = useState<'estadistico' | 'asistencia_estudiantes' | 'planillas'>('estadistico');
+  const [activeTab, setActiveTab] = useState<'estadistico' | 'asistencia_estudiantes' | 'asistencia_docente' | 'planillas'>('estadistico');
 
   // Load dynamic student data and structure
   const [estudiantes, setEstudiantes] = useState<Estudiante[]>(() => getLocalEstudiantes());
@@ -99,6 +103,18 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ user }) => {
   const [loadingHistorial, setLoadingHistorial] = useState<boolean>(false);
   const [historialError, setHistorialError] = useState<string | null>(null);
   const [expandedSesionId, setExpandedSesionId] = useState<string | null>(null);
+
+  // Asistencia Docente Real History Filters & State
+  const [docentesList, setDocentesList] = useState<Array<{ id: string; nombre_completo: string; sede_id?: string }>>([]);
+  const [docenteFilterSede, setDocenteFilterSede] = useState<string>('todas');
+  const [docenteFilterDocenteId, setDocenteFilterDocenteId] = useState<string>('todos');
+  const [docenteFilterMes, setDocenteFilterMes] = useState<string>('');
+  const [docenteFilterFechaInicio, setDocenteFilterFechaInicio] = useState<string>('');
+  const [docenteFilterFechaFin, setDocenteFilterFechaFin] = useState<string>('');
+  const [docenteFilterEstado, setDocenteFilterEstado] = useState<string>('todos');
+  const [asistenciasDocentesList, setAsistenciasDocentesList] = useState<AsistenciaDocente[]>([]);
+  const [loadingDocentes, setLoadingDocentes] = useState<boolean>(false);
+  const [docentesError, setDocentesError] = useState<string | null>(null);
 
   const refreshData = async () => {
     setIsLoading(true);
@@ -142,8 +158,147 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ user }) => {
       if (!gruposErr && gruposData) {
         setDbGrupos(gruposData);
       }
+
+      // 3. Cargar docentes activos para filtros
+      const { data: docentesData, error: docentesErr } = await supabase
+        .from('perfiles')
+        .select('id, nombre_completo, sede_id')
+        .eq('rol', 'docente')
+        .eq('activo', true)
+        .order('nombre_completo', { ascending: true });
+
+      if (!docentesErr && docentesData) {
+        setDocentesList(docentesData);
+      }
     } catch (err) {
       console.error('Error al cargar filtros de historial desde Supabase:', err);
+    }
+  };
+
+  // Consultar historial real de asistencia docente
+  const fetchAsistenciasDocentes = async () => {
+    if (!isSupabaseConfigured || !supabase) {
+      setDocentesError('Supabase no está configurado.');
+      return;
+    }
+
+    setLoadingDocentes(true);
+    setDocentesError(null);
+
+    try {
+      // 1. Determinar docentes a consultar si hay filtro por sede o docente
+      let targetDocenteIds: string[] | null = null;
+
+      if (docenteFilterDocenteId !== 'todos') {
+        targetDocenteIds = [docenteFilterDocenteId];
+      } else if (docenteFilterSede !== 'todas') {
+        // Filtrar docentes asignados a la sede seleccionada
+        const docsEnSede = docentesList.filter(d => d.sede_id === docenteFilterSede);
+        if (docsEnSede.length > 0) {
+          targetDocenteIds = docsEnSede.map(d => d.id);
+        } else {
+          // Si no hay docentes precargados en esa sede, buscar en perfiles
+          const { data: docsDb } = await supabase
+            .from('perfiles')
+            .select('id')
+            .eq('rol', 'docente')
+            .eq('sede_id', docenteFilterSede);
+          
+          targetDocenteIds = (docsDb || []).map(d => d.id);
+          if (targetDocenteIds.length === 0) {
+            setAsistenciasDocentesList([]);
+            setLoadingDocentes(false);
+            return;
+          }
+        }
+      }
+
+      // 2. Construir consulta principal a asistencias_docentes
+      let query = supabase
+        .from('asistencias_docentes')
+        .select('*')
+        .order('fecha_laboral', { ascending: false });
+
+      if (targetDocenteIds && targetDocenteIds.length > 0) {
+        query = query.in('docente_id', targetDocenteIds);
+      }
+
+      if (docenteFilterEstado !== 'todos') {
+        query = query.eq('estado', docenteFilterEstado);
+      }
+
+      if (docenteFilterFechaInicio && docenteFilterFechaFin) {
+        query = query.gte('fecha_laboral', docenteFilterFechaInicio).lte('fecha_laboral', docenteFilterFechaFin);
+      } else if (docenteFilterFechaInicio) {
+        query = query.gte('fecha_laboral', docenteFilterFechaInicio);
+      } else if (docenteFilterFechaFin) {
+        query = query.lte('fecha_laboral', docenteFilterFechaFin);
+      } else if (docenteFilterMes) {
+        // Filtro por mes YYYY-MM
+        const [year, month] = docenteFilterMes.split('-');
+        const startDate = `${year}-${month}-01`;
+        const lastDay = new Date(parseInt(year, 10), parseInt(month, 10), 0).getDate();
+        const endDate = `${year}-${month}-${String(lastDay).padStart(2, '0')}`;
+        query = query.gte('fecha_laboral', startDate).lte('fecha_laboral', endDate);
+      }
+
+      const { data: asistData, error: asistErr } = await query;
+
+      if (asistErr) {
+        throw new Error(asistErr.message);
+      }
+
+      if (!asistData || asistData.length === 0) {
+        setAsistenciasDocentesList([]);
+        setLoadingDocentes(false);
+        return;
+      }
+
+      // 3. Consultar tablas relacionadas por separado (perfiles y sedes) para evitar joins ambiguos
+      const uniqueDocenteIds = Array.from(new Set(asistData.map(a => a.docente_id).filter(Boolean)));
+      
+      let perfilMap = new Map<string, { nombre_completo: string; sede_id?: string }>();
+      if (uniqueDocenteIds.length > 0) {
+        const { data: perfilesData } = await supabase
+          .from('perfiles')
+          .select('id, nombre_completo, sede_id')
+          .in('id', uniqueDocenteIds);
+
+        (perfilesData || []).forEach(p => {
+          perfilMap.set(p.id, {
+            nombre_completo: p.nombre_completo,
+            sede_id: p.sede_id
+          });
+        });
+      }
+
+      // Consultar sedes para mapear nombres
+      const { data: sedesData } = await supabase
+        .from('sedes')
+        .select('id, nombre');
+
+      const sedeMap = new Map<string, string>();
+      (sedesData || []).forEach(s => sedeMap.set(s.id, s.nombre));
+
+      // 4. Enriquecer asistencias con nombres de docente y sede
+      const enriched: AsistenciaDocente[] = asistData.map(a => {
+        const perf = perfilMap.get(a.docente_id);
+        const docenteNombre = perf?.nombre_completo || 'Docente no registrado';
+        const sedeNombre = perf?.sede_id ? (sedeMap.get(perf.sede_id) || 'Sede sin asignar') : 'Sede General';
+
+        return {
+          ...a,
+          docente_nombre: docenteNombre,
+          sede_nombre: sedeNombre
+        };
+      });
+
+      setAsistenciasDocentesList(enriched);
+    } catch (err: any) {
+      console.error('Error al cargar asistencias de docentes:', err);
+      setDocentesError(err.message || 'Error al consultar asistencias docentes en Supabase.');
+    } finally {
+      setLoadingDocentes(false);
     }
   };
 
@@ -345,6 +500,48 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ user }) => {
       window.removeEventListener('asistencia-estudiantes-guardada', handleAsistenciaSaved);
     };
   }, []);
+
+  // Cargar historial de asistencia docente cuando se entra a la pestaña o cambian los filtros
+  useEffect(() => {
+    if (activeTab === 'asistencia_docente') {
+      fetchAsistenciasDocentes();
+    }
+  }, [
+    activeTab,
+    docenteFilterSede,
+    docenteFilterDocenteId,
+    docenteFilterMes,
+    docenteFilterFechaInicio,
+    docenteFilterFechaFin,
+    docenteFilterEstado
+  ]);
+
+  // Docentes filtrados según la sede seleccionada en la pestaña de Asistencia Docente
+  const filteredDocentesForFilter = useMemo(() => {
+    if (docenteFilterSede === 'todas') return docentesList;
+    return docentesList.filter(d => d.sede_id === docenteFilterSede);
+  }, [docentesList, docenteFilterSede]);
+
+  // Resumen métrico calculado de Asistencia Docente
+  const resumenDocente = useMemo(() => {
+    const total = asistenciasDocentesList.length;
+    const puntuales = asistenciasDocentesList.filter(a => a.estado === 'puntual').length;
+    const atrasos = asistenciasDocentesList.filter(a => a.estado === 'atraso').length;
+    const faltas = asistenciasDocentesList.filter(a => a.estado === 'falta').length;
+    const licencias = asistenciasDocentesList.filter(a => a.estado === 'licencia').length;
+    const incompletos = asistenciasDocentesList.filter(a => a.estado === 'registro_incompleto').length;
+    const totalHoras = asistenciasDocentesList.reduce((acc, curr) => acc + (curr.horas_trabajadas || 0), 0);
+
+    return {
+      total,
+      puntuales,
+      atrasos,
+      faltas,
+      licencias,
+      incompletos,
+      totalHoras: Math.round(totalHoras * 10) / 10
+    };
+  }, [asistenciasDocentesList]);
 
   // Cargar historial cuando se entra a la pestaña o cambian los filtros
   useEffect(() => {
@@ -580,6 +777,16 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ user }) => {
         >
           <Users className="w-4 h-4 shrink-0" />
           <span>Asistencia Estudiantil</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('asistencia_docente')}
+          className={`flex-1 py-2.5 px-2 rounded-xl text-xs font-extrabold flex items-center justify-center gap-1.5 transition-all whitespace-nowrap ${
+            activeTab === 'asistencia_docente' ? 'bg-[#00A651] text-white shadow-xs' : 'text-slate-700 hover:text-slate-900'
+          }`}
+        >
+          <UserCheck2 className="w-4 h-4 shrink-0" />
+          <span>Asistencia Docente</span>
         </button>
 
         <button
@@ -840,6 +1047,376 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ user }) => {
                   </div>
                 );
               })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ================= REPORTE DE ASISTENCIA DOCENTE ================= */}
+      {activeTab === 'asistencia_docente' && (
+        <div className="space-y-4">
+          {/* Panel de Filtros */}
+          <div className="p-4 bg-white rounded-3xl border border-slate-200 shadow-xs space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-slate-800 font-extrabold text-sm">
+                <Filter className="w-4 h-4 text-[#00A651]" />
+                <span>Filtros de Asistencia Docente</span>
+              </div>
+              {(docenteFilterSede !== 'todas' ||
+                docenteFilterDocenteId !== 'todos' ||
+                docenteFilterMes !== '' ||
+                docenteFilterFechaInicio !== '' ||
+                docenteFilterFechaFin !== '' ||
+                docenteFilterEstado !== 'todos') && (
+                <button
+                  onClick={() => {
+                    setDocenteFilterSede('todas');
+                    setDocenteFilterDocenteId('todos');
+                    setDocenteFilterMes('');
+                    setDocenteFilterFechaInicio('');
+                    setDocenteFilterFechaFin('');
+                    setDocenteFilterEstado('todos');
+                  }}
+                  className="text-[11px] font-bold text-slate-500 hover:text-red-600 transition-colors"
+                >
+                  Restablecer Filtros
+                </button>
+              )}
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+              {/* Filtro Sede */}
+              <div>
+                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">
+                  Sede Educativa
+                </label>
+                <select
+                  value={docenteFilterSede}
+                  onChange={(e) => {
+                    setDocenteFilterSede(e.target.value);
+                    setDocenteFilterDocenteId('todos');
+                  }}
+                  className="w-full h-10 px-3 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 focus:outline-none focus:border-[#00A651]"
+                >
+                  <option value="todas">Todas las sedes</option>
+                  {dbSedes.map(s => (
+                    <option key={s.id} value={s.id}>{s.nombre}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Filtro Docente */}
+              <div>
+                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">
+                  Docente
+                </label>
+                <select
+                  value={docenteFilterDocenteId}
+                  onChange={(e) => setDocenteFilterDocenteId(e.target.value)}
+                  className="w-full h-10 px-3 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 focus:outline-none focus:border-[#00A651]"
+                >
+                  <option value="todos">Todos los docentes</option>
+                  {filteredDocentesForFilter.map(d => (
+                    <option key={d.id} value={d.id}>{d.nombre_completo}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Filtro Estado */}
+              <div>
+                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">
+                  Estado
+                </label>
+                <select
+                  value={docenteFilterEstado}
+                  onChange={(e) => setDocenteFilterEstado(e.target.value)}
+                  className="w-full h-10 px-3 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 focus:outline-none focus:border-[#00A651]"
+                >
+                  <option value="todos">Todos los estados</option>
+                  <option value="puntual">Puntual</option>
+                  <option value="atraso">Atraso</option>
+                  <option value="falta">Falta</option>
+                  <option value="licencia">Licencia</option>
+                  <option value="registro_incompleto">Registro Incompleto</option>
+                  <option value="salida_anticipada">Salida Anticipada</option>
+                </select>
+              </div>
+
+              {/* Filtro Mes o Rango */}
+              <div>
+                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">
+                  Mes Específico
+                </label>
+                <input
+                  type="month"
+                  value={docenteFilterMes}
+                  onChange={(e) => {
+                    setDocenteFilterMes(e.target.value);
+                    if (e.target.value) {
+                      setDocenteFilterFechaInicio('');
+                      setDocenteFilterFechaFin('');
+                    }
+                  }}
+                  className="w-full h-10 px-3 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 focus:outline-none focus:border-[#00A651]"
+                />
+              </div>
+            </div>
+
+            {/* Rango de Fechas Opcional */}
+            <div className="pt-2 border-t border-slate-100 flex flex-wrap items-center gap-3 text-xs">
+              <span className="text-[11px] font-bold text-slate-500">O rango personalizado:</span>
+              <div className="flex items-center gap-2">
+                <input
+                  type="date"
+                  value={docenteFilterFechaInicio}
+                  onChange={(e) => {
+                    setDocenteFilterFechaInicio(e.target.value);
+                    if (e.target.value) setDocenteFilterMes('');
+                  }}
+                  className="h-9 px-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 focus:outline-none focus:border-[#00A651]"
+                />
+                <span className="text-slate-400 font-bold">a</span>
+                <input
+                  type="date"
+                  value={docenteFilterFechaFin}
+                  onChange={(e) => {
+                    setDocenteFilterFechaFin(e.target.value);
+                    if (e.target.value) setDocenteFilterMes('');
+                  }}
+                  className="h-9 px-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 focus:outline-none focus:border-[#00A651]"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Banner de Error */}
+          {docentesError && (
+            <div className="p-4 bg-red-50 border border-red-200 rounded-2xl text-xs text-red-700 flex items-center gap-2 font-medium">
+              <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
+              <span>{docentesError}</span>
+            </div>
+          )}
+
+          {/* Tarjetas de Resumen Métrico */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+            <div className="p-3.5 bg-white rounded-2xl border border-slate-200 shadow-xs space-y-1">
+              <div className="flex items-center justify-between text-slate-500">
+                <span className="text-[11px] font-extrabold uppercase tracking-wider">Total Registros</span>
+                <FileText className="w-4 h-4 text-[#17324D]" />
+              </div>
+              <p className="text-2xl font-black text-[#17324D]">{resumenDocente.total}</p>
+              <p className="text-[10px] text-slate-400 font-semibold">{resumenDocente.totalHoras} hrs acumuladas</p>
+            </div>
+
+            <div className="p-3.5 bg-white rounded-2xl border border-slate-200 shadow-xs space-y-1">
+              <div className="flex items-center justify-between text-emerald-600">
+                <span className="text-[11px] font-extrabold uppercase tracking-wider">Puntuales</span>
+                <CheckCircle2 className="w-4 h-4" />
+              </div>
+              <p className="text-2xl font-black text-emerald-600">{resumenDocente.puntuales}</p>
+              <p className="text-[10px] text-slate-400 font-semibold">
+                {resumenDocente.total > 0 ? Math.round((resumenDocente.puntuales / resumenDocente.total) * 100) : 0}% del total
+              </p>
+            </div>
+
+            <div className="p-3.5 bg-white rounded-2xl border border-slate-200 shadow-xs space-y-1">
+              <div className="flex items-center justify-between text-amber-600">
+                <span className="text-[11px] font-extrabold uppercase tracking-wider">Atrasos</span>
+                <Clock className="w-4 h-4" />
+              </div>
+              <p className="text-2xl font-black text-amber-600">{resumenDocente.atrasos}</p>
+              <p className="text-[10px] text-slate-400 font-semibold">
+                {resumenDocente.total > 0 ? Math.round((resumenDocente.atrasos / resumenDocente.total) * 100) : 0}% del total
+              </p>
+            </div>
+
+            <div className="p-3.5 bg-white rounded-2xl border border-slate-200 shadow-xs space-y-1">
+              <div className="flex items-center justify-between text-red-600">
+                <span className="text-[11px] font-extrabold uppercase tracking-wider">Faltas</span>
+                <XCircle className="w-4 h-4" />
+              </div>
+              <p className="text-2xl font-black text-red-600">{resumenDocente.faltas}</p>
+              <p className="text-[10px] text-slate-400 font-semibold">
+                {resumenDocente.total > 0 ? Math.round((resumenDocente.faltas / resumenDocente.total) * 100) : 0}% del total
+              </p>
+            </div>
+
+            <div className="p-3.5 bg-white rounded-2xl border border-slate-200 shadow-xs space-y-1">
+              <div className="flex items-center justify-between text-blue-600">
+                <span className="text-[11px] font-extrabold uppercase tracking-wider">Licencias</span>
+                <BookOpen className="w-4 h-4" />
+              </div>
+              <p className="text-2xl font-black text-blue-600">{resumenDocente.licencias}</p>
+              <p className="text-[10px] text-slate-400 font-semibold">Justificadas</p>
+            </div>
+
+            <div className="p-3.5 bg-white rounded-2xl border border-slate-200 shadow-xs space-y-1">
+              <div className="flex items-center justify-between text-purple-600">
+                <span className="text-[11px] font-extrabold uppercase tracking-wider">Incompletos</span>
+                <AlertCircle className="w-4 h-4" />
+              </div>
+              <p className="text-2xl font-black text-purple-600">{resumenDocente.incompletos}</p>
+              <p className="text-[10px] text-slate-400 font-semibold">Sin marcación salida</p>
+            </div>
+          </div>
+
+          {/* Tabla de Registros Reales */}
+          {loadingDocentes ? (
+            <div className="p-12 text-center bg-white rounded-3xl border border-slate-200">
+              <RefreshCw className="w-8 h-8 text-[#00A651] animate-spin mx-auto mb-2" />
+              <p className="text-xs font-bold text-slate-600">Consultando asistencias docentes en Supabase...</p>
+            </div>
+          ) : asistenciasDocentesList.length === 0 ? (
+            <div className="p-10 text-center bg-white rounded-3xl border border-slate-200 shadow-xs space-y-2">
+              <Calendar className="w-10 h-10 text-slate-300 mx-auto" />
+              <h4 className="font-extrabold text-sm text-slate-700">No se encontraron registros de asistencia docente para los filtros aplicados.</h4>
+              <p className="text-xs text-slate-500">
+                Las marcaciones registradas por los docentes desde su módulo aparecerán en este reporte institucional.
+              </p>
+            </div>
+          ) : (
+            <div className="bg-white rounded-3xl border border-slate-200 shadow-xs overflow-hidden">
+              <div className="px-5 py-3.5 border-b border-slate-100 flex items-center justify-between">
+                <span className="text-xs font-extrabold text-[#17324D]">
+                  Mostrando {asistenciasDocentesList.length} {asistenciasDocentesList.length === 1 ? 'registro' : 'registros'}
+                </span>
+                <span className="text-[11px] text-slate-400 font-semibold">
+                  Datos en tiempo real desde Supabase
+                </span>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-slate-50 text-slate-500 font-extrabold uppercase text-[10px] tracking-wider border-b border-slate-100">
+                    <tr>
+                      <th className="py-3 px-4">Fecha</th>
+                      <th className="py-3 px-4">Docente</th>
+                      <th className="py-3 px-4">Sede</th>
+                      <th className="py-3 px-4">Ingreso</th>
+                      <th className="py-3 px-4">Salida</th>
+                      <th className="py-3 px-4 text-center">Atraso</th>
+                      <th className="py-3 px-4 text-center">Horas</th>
+                      <th className="py-3 px-4 text-center">Estado</th>
+                      <th className="py-3 px-4 text-center">Origen</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
+                    {asistenciasDocentesList.map((asist) => {
+                      const horaIngreso = asist.hora_ingreso_oficial || asist.hora_ingreso_local || '--:--';
+                      const horaSalida = asist.hora_salida_oficial || asist.hora_salida_local || '--:--';
+                      const minutosAtraso = asist.minutos_atraso || 0;
+                      const horasTrabajadas = asist.horas_trabajadas || 0;
+                      const isOffline = asist.origen_registro === 'sin_conexion';
+
+                      return (
+                        <tr key={asist.id} className="hover:bg-slate-50/80 transition-colors">
+                          {/* Fecha */}
+                          <td className="py-3 px-4 font-bold text-slate-800 whitespace-nowrap">
+                            {asist.fecha_laboral}
+                          </td>
+
+                          {/* Docente */}
+                          <td className="py-3 px-4 font-extrabold text-[#17324D] whitespace-nowrap">
+                            {asist.docente_nombre || 'Docente sin asignar'}
+                          </td>
+
+                          {/* Sede */}
+                          <td className="py-3 px-4 text-slate-600 whitespace-nowrap">
+                            {asist.sede_nombre || 'Sede General'}
+                          </td>
+
+                          {/* Hora Ingreso */}
+                          <td className="py-3 px-4 font-mono font-bold text-slate-800 whitespace-nowrap">
+                            {horaIngreso}
+                          </td>
+
+                          {/* Hora Salida */}
+                          <td className="py-3 px-4 font-mono font-bold text-slate-800 whitespace-nowrap">
+                            {horaSalida}
+                          </td>
+
+                          {/* Minutos Atraso */}
+                          <td className="py-3 px-4 text-center whitespace-nowrap">
+                            {minutosAtraso > 0 ? (
+                              <span className="font-extrabold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-md">
+                                {minutosAtraso} min
+                              </span>
+                            ) : (
+                              <span className="text-slate-400 font-semibold">0 min</span>
+                            )}
+                          </td>
+
+                          {/* Horas Trabajadas */}
+                          <td className="py-3 px-4 text-center font-bold text-slate-800 whitespace-nowrap">
+                            {horasTrabajadas > 0 ? `${horasTrabajadas}h` : '--'}
+                          </td>
+
+                          {/* Estado */}
+                          <td className="py-3 px-4 text-center whitespace-nowrap">
+                            {asist.estado === 'puntual' && (
+                              <span className="px-2.5 py-1 bg-emerald-100 text-emerald-800 font-extrabold text-[11px] rounded-lg inline-flex items-center gap-1">
+                                <CheckCircle2 className="w-3.5 h-3.5" />
+                                <span>Puntual</span>
+                              </span>
+                            )}
+                            {asist.estado === 'atraso' && (
+                              <span className="px-2.5 py-1 bg-amber-100 text-amber-800 font-extrabold text-[11px] rounded-lg inline-flex items-center gap-1">
+                                <Clock className="w-3.5 h-3.5" />
+                                <span>Atraso</span>
+                              </span>
+                            )}
+                            {asist.estado === 'falta' && (
+                              <span className="px-2.5 py-1 bg-red-100 text-red-800 font-extrabold text-[11px] rounded-lg inline-flex items-center gap-1">
+                                <XCircle className="w-3.5 h-3.5" />
+                                <span>Falta</span>
+                              </span>
+                            )}
+                            {asist.estado === 'licencia' && (
+                              <span className="px-2.5 py-1 bg-blue-100 text-blue-800 font-extrabold text-[11px] rounded-lg inline-flex items-center gap-1">
+                                <BookOpen className="w-3.5 h-3.5" />
+                                <span>Licencia</span>
+                              </span>
+                            )}
+                            {asist.estado === 'registro_incompleto' && (
+                              <span className="px-2.5 py-1 bg-purple-100 text-purple-800 font-extrabold text-[11px] rounded-lg inline-flex items-center gap-1">
+                                <AlertCircle className="w-3.5 h-3.5" />
+                                <span>Incompleto</span>
+                              </span>
+                            )}
+                            {asist.estado === 'salida_anticipada' && (
+                              <span className="px-2.5 py-1 bg-orange-100 text-orange-800 font-extrabold text-[11px] rounded-lg inline-flex items-center gap-1">
+                                <Clock className="w-3.5 h-3.5" />
+                                <span>Salida Anticipada</span>
+                              </span>
+                            )}
+                            {asist.estado === 'pendiente_verificacion' && (
+                              <span className="px-2.5 py-1 bg-slate-100 text-slate-700 font-extrabold text-[11px] rounded-lg inline-flex items-center gap-1">
+                                <AlertCircle className="w-3.5 h-3.5" />
+                                <span>Pendiente</span>
+                              </span>
+                            )}
+                          </td>
+
+                          {/* Origen del Registro */}
+                          <td className="py-3 px-4 text-center whitespace-nowrap">
+                            {isOffline ? (
+                              <span className="px-2 py-0.5 bg-amber-50 text-amber-700 border border-amber-200 rounded-md font-bold text-[10px] inline-flex items-center gap-1">
+                                <WifiOff className="w-3 h-3" />
+                                <span>Sin Conexión</span>
+                              </span>
+                            ) : (
+                              <span className="px-2 py-0.5 bg-emerald-50 text-[#00A651] border border-emerald-200 rounded-md font-bold text-[10px] inline-flex items-center gap-1">
+                                <Wifi className="w-3 h-3" />
+                                <span>En Línea</span>
+                              </span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
         </div>
