@@ -19,7 +19,7 @@ import {
   RefreshCw
 } from 'lucide-react';
 import { Perfil, Sede, Horario, Programa, Etapa, NivelEducativo, DatosInstitucionales } from '../types';
-import { INITIAL_SEDES, INITIAL_HORARIOS } from '../lib/mockData';
+import { INITIAL_SEDES } from '../lib/mockData';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { getLocalDatosInstitucionales, saveDatosInstitucionales, loadDatosInstitucionales } from '../lib/institutional';
 import {
@@ -53,7 +53,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   // Academic Sub-section inside 'programas'
   const [academicCategory, setAcademicCategory] = useState<'programas' | 'etapas' | 'niveles'>('programas');
 
-  const [horarios, setHorarios] = useState<Horario[]>(INITIAL_HORARIOS);
+  const [horarios, setHorarios] = useState<Horario[]>([]);
+  const [loadingHorarios, setLoadingHorarios] = useState<boolean>(false);
+  const [horariosError, setHorariosError] = useState<string | null>(null);
   const [sedes, setSedes] = useState<Sede[]>([]);
   const [loadingSedes, setLoadingSedes] = useState<boolean>(false);
   const [sedesError, setSedesError] = useState<string | null>(null);
@@ -99,9 +101,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
   const fetchHorarios = async () => {
     if (!isSupabaseConfigured || !supabase) {
-      setHorarios(INITIAL_HORARIOS);
+      setHorarios([]);
       return;
     }
+    setLoadingHorarios(true);
+    setHorariosError(null);
     try {
       const { data, error } = await supabase
         .from('horarios')
@@ -110,11 +114,21 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
       if (error) {
         console.error('Error al cargar horarios de Supabase:', error);
+        setHorariosError(`Error de Supabase: ${error.message}`);
+        setHorarios([]);
       } else if (data) {
-        setHorarios(data as Horario[]);
+        const mapped: Horario[] = data.map((item: any) => ({
+          ...item,
+          sede_nombre: item.sedes?.nombre || item.sede_nombre || 'Sede General',
+        }));
+        setHorarios(mapped);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Excepción al cargar horarios:', err);
+      setHorariosError(err.message || 'Error de conexión al cargar horarios');
+      setHorarios([]);
+    } finally {
+      setLoadingHorarios(false);
     }
   };
 
@@ -1073,62 +1087,98 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       {activeAdminSubTab === 'horarios' && (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
-            <h3 className="font-extrabold text-base text-[#17324D]">Horarios Institucionales</h3>
-            <button className="h-9 px-3 bg-[#00A651] text-white font-bold text-xs rounded-xl flex items-center gap-1">
-              <Plus className="w-4 h-4" /> <span>Nuevo Horario</span>
-            </button>
+            <div>
+              <h3 className="font-extrabold text-base text-[#17324D]">Horarios Institucionales</h3>
+              <p className="text-xs text-slate-500 font-medium">Horas de ingreso, tolerancia y salida por sede</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={fetchHorarios}
+                disabled={loadingHorarios}
+                className="h-9 px-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl flex items-center gap-1 transition-all disabled:opacity-50"
+                title="Recargar horarios desde Supabase"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 text-slate-600 ${loadingHorarios ? 'animate-spin' : ''}`} />
+                <span>Actualizar</span>
+              </button>
+              <button className="h-9 px-3 bg-[#00A651] text-white font-bold text-xs rounded-xl flex items-center gap-1">
+                <Plus className="w-4 h-4" /> <span>Nuevo Horario</span>
+              </button>
+            </div>
           </div>
 
-          <div className="space-y-3">
-            {horarios.map(h => (
-              <div key={h.id} className="p-5 bg-white rounded-3xl border border-slate-200 shadow-xs space-y-3">
-                <div className="flex items-start justify-between">
-                  <div>
-                    <span className="text-[10px] font-bold text-emerald-800 bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-200">
-                      {h.sede_nombre}
-                    </span>
-                    <h4 className="font-extrabold text-[#17324D] text-base mt-1">{h.nombre}</h4>
+          {horariosError && (
+            <div className="p-3 bg-red-50 border border-red-200 rounded-2xl text-xs text-red-700 font-semibold flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
+              <span>{horariosError}</span>
+            </div>
+          )}
+
+          {loadingHorarios ? (
+            <div className="p-12 text-center text-slate-500 space-y-2">
+              <RefreshCw className="w-8 h-8 text-[#00A651] animate-spin mx-auto" />
+              <p className="text-xs font-bold">Cargando horarios de Supabase...</p>
+            </div>
+          ) : horarios.length === 0 ? (
+            <div className="p-10 text-center text-slate-500 bg-white rounded-3xl border border-slate-200 space-y-2">
+              <Clock className="w-10 h-10 text-slate-300 mx-auto" />
+              <p className="font-bold text-sm text-slate-700">No hay horarios registrados en Supabase.</p>
+              <p className="text-xs text-slate-400">
+                Los horarios configurados en public.horarios se mostrarán en esta lista.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {horarios.map(h => (
+                <div key={h.id} className="p-5 bg-white rounded-3xl border border-slate-200 shadow-xs space-y-3">
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <span className="text-[10px] font-bold text-emerald-800 bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-200">
+                        {h.sede_nombre}
+                      </span>
+                      <h4 className="font-extrabold text-[#17324D] text-base mt-1">{h.nombre}</h4>
+                    </div>
+                    {h.es_invierno && (
+                      <span className="bg-blue-100 text-blue-900 border border-blue-300 text-[10px] font-bold px-2 py-0.5 rounded-full">
+                        Horario Invierno Activo
+                      </span>
+                    )}
                   </div>
-                  {h.es_invierno && (
-                    <span className="bg-blue-100 text-blue-900 border border-blue-300 text-[10px] font-bold px-2 py-0.5 rounded-full">
-                      Horario Invierno Activo
-                    </span>
+
+                  <div className="grid grid-cols-3 gap-2 p-3 bg-slate-50 rounded-2xl border border-slate-200 text-center text-xs">
+                    <div>
+                      <span className="text-[10px] font-bold text-slate-400 block uppercase">Ingreso</span>
+                      <strong className="text-base text-[#00A651]">{h.hora_ingreso}</strong>
+                    </div>
+                    <div>
+                      <span className="text-[10px] font-bold text-slate-400 block uppercase">Tolerancia</span>
+                      <strong className="text-base text-slate-700">{h.tolerancia_hasta}</strong>
+                    </div>
+                    <div>
+                      <span className="text-[10px] font-bold text-slate-400 block uppercase">Salida</span>
+                      <strong className="text-base text-[#17324D]">{h.hora_salida}</strong>
+                    </div>
+                  </div>
+
+                  {h.sede_nombre === 'Sede Poroma' && (
+                    <button
+                      onClick={() => handleToggleInvierno(h.id)}
+                      className={`w-full h-11 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all ${
+                        h.es_invierno
+                          ? 'bg-amber-100 text-amber-950 border border-amber-300'
+                          : 'bg-blue-50 text-blue-900 border border-blue-200 hover:bg-blue-100'
+                      }`}
+                    >
+                      <Clock className="w-4 h-4" />
+                      <span>
+                        {h.es_invierno ? 'Desactivar Horario de Invierno (Volver a 22:00)' : 'Activar Horario de Invierno (Salida 21:30)'}
+                      </span>
+                    </button>
                   )}
                 </div>
-
-                <div className="grid grid-cols-3 gap-2 p-3 bg-slate-50 rounded-2xl border border-slate-200 text-center text-xs">
-                  <div>
-                    <span className="text-[10px] font-bold text-slate-400 block uppercase">Ingreso</span>
-                    <strong className="text-base text-[#00A651]">{h.hora_ingreso}</strong>
-                  </div>
-                  <div>
-                    <span className="text-[10px] font-bold text-slate-400 block uppercase">Tolerancia</span>
-                    <strong className="text-base text-slate-700">{h.tolerancia_hasta}</strong>
-                  </div>
-                  <div>
-                    <span className="text-[10px] font-bold text-slate-400 block uppercase">Salida</span>
-                    <strong className="text-base text-[#17324D]">{h.hora_salida}</strong>
-                  </div>
-                </div>
-
-                {h.sede_nombre === 'Sede Poroma' && (
-                  <button
-                    onClick={() => handleToggleInvierno(h.id)}
-                    className={`w-full h-11 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all ${
-                      h.es_invierno
-                        ? 'bg-amber-100 text-amber-950 border border-amber-300'
-                        : 'bg-blue-50 text-blue-900 border border-blue-200 hover:bg-blue-100'
-                    }`}
-                  >
-                    <Clock className="w-4 h-4" />
-                    <span>
-                      {h.es_invierno ? 'Desactivar Horario de Invierno (Volver a 22:00)' : 'Activar Horario de Invierno (Salida 21:30)'}
-                    </span>
-                  </button>
-                )}
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 

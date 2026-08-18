@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Clock,
   Calendar,
@@ -12,26 +12,92 @@ import {
   ShieldAlert,
   X,
   Check,
-  Eye
+  Eye,
+  RefreshCw,
+  AlertCircle
 } from 'lucide-react';
 import { Perfil, AsistenciaDocente, ResumenAsistenciaDocenteMensual } from '../types';
-import { MOCK_ASISTENCIAS_DOCENTES } from '../lib/mockData';
 import { downloadDocenteAttendanceReport } from '../lib/excelExport';
-import { supabase } from '../lib/supabase';
+import { supabase, isSupabaseConfigured } from '../lib/supabase';
 
 interface TeacherAttendanceViewProps {
   user: Perfil;
 }
 
 export const TeacherAttendanceView: React.FC<TeacherAttendanceViewProps> = ({ user }) => {
-  const [selectedMonth, setSelectedMonth] = useState<string>('2026-07');
-  const [recordsState, setRecordsState] = useState<AsistenciaDocente[]>(MOCK_ASISTENCIAS_DOCENTES);
+  const [selectedMonth, setSelectedMonth] = useState<string>(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  });
+  const [recordsState, setRecordsState] = useState<AsistenciaDocente[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [selectedSelfieUrl, setSelectedSelfieUrl] = useState<string | null>(null);
 
   const isDirectorOrAdmin = user.rol === 'superadmin' || user.rol === 'director' || user.rol === 'coordinador';
 
+  // Fetch real records from public.asistencias_docentes
+  const fetchAsistencias = async () => {
+    if (!isSupabaseConfigured || !supabase) {
+      setRecordsState([]);
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
+    setErrorMsg(null);
+
+    try {
+      let query = supabase
+        .from('asistencias_docentes')
+        .select('*')
+        .order('fecha_laboral', { ascending: false });
+
+      // If not director/admin, filter strictly by authenticated user id
+      if (!isDirectorOrAdmin) {
+        query = query.eq('docente_id', user.id);
+      }
+
+      // Filter by selectedMonth (YYYY-MM)
+      if (selectedMonth) {
+        const [year, month] = selectedMonth.split('-');
+        const startDate = `${year}-${month}-01`;
+        const lastDay = new Date(parseInt(year, 10), parseInt(month, 10), 0).getDate();
+        const endDate = `${year}-${month}-${String(lastDay).padStart(2, '0')}`;
+        query = query.gte('fecha_laboral', startDate).lte('fecha_laboral', endDate);
+      }
+
+      const { data, error } = await query;
+
+      if (error) {
+        throw new Error(error.message);
+      }
+
+      const mapped: AsistenciaDocente[] = (data || []).map((a: any) => ({
+        ...a,
+        docente_nombre: a.docente_nombre || user.nombre_completo,
+        sede_nombre: a.sede_nombre || user.sede_nombre || 'Sede General',
+        horas_trabajadas: Number(a.horas_trabajadas || 0),
+        minutos_atraso: Number(a.minutos_atraso || 0),
+        minutos_salida_anticipada: Number(a.minutos_salida_anticipada || 0)
+      }));
+
+      setRecordsState(mapped);
+    } catch (err: any) {
+      console.error('Error al cargar asistencias del docente:', err);
+      setErrorMsg(err.message || 'Error al consultar asistencias docentes en Supabase.');
+      setRecordsState([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchAsistencias();
+  }, [user.id, selectedMonth]);
+
   // Filter records
-  const records = recordsState.filter(a => a.docente_id === user.id || isDirectorOrAdmin);
+  const records = recordsState;
 
   const diasProgramados = 22;
   const diasAsistidos = records.length;
@@ -160,160 +226,190 @@ export const TeacherAttendanceView: React.FC<TeacherAttendanceViewProps> = ({ us
 
       {/* Daily Records List */}
       <div className="bg-white rounded-3xl p-5 border border-slate-200 shadow-xs space-y-4">
-        <h3 className="font-extrabold text-base text-[#17324D]">Historial de Jornadas</h3>
+        <div className="flex items-center justify-between">
+          <h3 className="font-extrabold text-base text-[#17324D]">Historial de Jornadas</h3>
+          {loading && (
+            <div className="flex items-center gap-1.5 text-xs text-[#00A651] font-bold">
+              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+              <span>Cargando registros...</span>
+            </div>
+          )}
+        </div>
 
-        <div className="space-y-3">
-          {records.map((r) => (
-            <div key={r.id} className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-2 text-xs">
-              <div className="flex items-center justify-between border-b border-slate-200 pb-2">
-                <span className="font-extrabold text-sm text-[#17324D]">{r.fecha_laboral}</span>
-                <span
-                  className={`px-3 py-1 rounded-full font-bold uppercase text-[10px] ${
-                    r.estado === 'puntual'
-                      ? 'bg-emerald-100 text-emerald-800'
-                      : r.estado === 'atraso'
-                      ? 'bg-amber-100 text-amber-800'
-                      : 'bg-slate-200 text-slate-800'
-                  }`}
-                >
-                  {r.estado}
-                </span>
-              </div>
+        {errorMsg && (
+          <div className="p-3 bg-red-50 border border-red-200 rounded-2xl text-xs text-red-700 font-semibold flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
+            <span>{errorMsg}</span>
+          </div>
+        )}
 
-              <div className="grid grid-cols-2 gap-2 text-slate-700 font-medium">
-                <div>
-                  <span>Ingreso:</span>{' '}
-                  <strong>{r.hora_ingreso_oficial ? new Date(r.hora_ingreso_oficial).toLocaleTimeString('es-BO', { hour: '2-digit', minute: '2-digit' }) : 'N/D'}</strong>
-                  {r.firma_ingreso && <span className="ml-1 text-[10px] text-emerald-700 font-bold">(Firmado ✓)</span>}
-                </div>
-                <div>
-                  <span>Salida:</span>{' '}
-                  <strong>{r.hora_salida_oficial ? new Date(r.hora_salida_oficial).toLocaleTimeString('es-BO', { hour: '2-digit', minute: '2-digit' }) : 'N/D'}</strong>
-                  {r.firma_salida && <span className="ml-1 text-[10px] text-emerald-700 font-bold">(Firmado ✓)</span>}
-                </div>
-                <div>
-                  <span>Horas trabajadas:</span> <strong>{r.horas_trabajadas} hrs</strong>
-                </div>
-                <div>
-                  <span>Origen:</span>{' '}
-                  <strong className={r.origen_registro === 'sin_conexion' ? 'text-amber-700' : 'text-emerald-700'}>
-                    {r.origen_registro === 'sin_conexion' ? 'Sin conexión (Offline)' : 'En Línea'}
-                  </strong>
-                </div>
-              </div>
-
-              {/* GPS & Selfie Verification Box */}
-              <div className="p-2.5 bg-white rounded-xl border border-slate-200 space-y-1.5 text-[11px]">
-                <div className="flex justify-between items-center font-bold text-slate-800">
-                  <span className="flex items-center gap-1 text-[#17324D]">
-                    <MapPin className="w-3.5 h-3.5 text-[#00A651]" />
-                    <span>Verificación GPS y Selfie</span>
+        {loading ? (
+          <div className="p-12 text-center text-slate-500 space-y-2">
+            <RefreshCw className="w-8 h-8 text-[#00A651] animate-spin mx-auto" />
+            <p className="text-xs font-bold">Consultando registros oficiales...</p>
+          </div>
+        ) : records.length === 0 ? (
+          <div className="p-10 text-center text-slate-500 bg-slate-50 rounded-2xl border border-slate-200 space-y-2">
+            <Calendar className="w-10 h-10 text-slate-300 mx-auto" />
+            <p className="font-bold text-sm text-slate-700">No hay registros de asistencia docente.</p>
+            <p className="text-xs text-slate-400">
+              Las marcaciones registradas para el mes seleccionado aparecerán en este historial.
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {records.map((r) => (
+              <div key={r.id} className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-2 text-xs">
+                <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+                  <span className="font-extrabold text-sm text-[#17324D]">{r.fecha_laboral}</span>
+                  <span
+                    className={`px-3 py-1 rounded-full font-bold uppercase text-[10px] ${
+                      r.estado === 'puntual'
+                        ? 'bg-emerald-100 text-emerald-800'
+                        : r.estado === 'atraso'
+                        ? 'bg-amber-100 text-amber-800'
+                        : 'bg-slate-200 text-slate-800'
+                    }`}
+                  >
+                    {r.estado}
                   </span>
-                  {r.distancia_m_ingreso !== undefined ? (
-                    <span className="text-slate-600 font-extrabold">Distancia: {r.distancia_m_ingreso}m</span>
-                  ) : (
-                    <span className="text-slate-400 font-normal">GPS Estándar</span>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2 text-slate-700 font-medium">
+                  <div>
+                    <span>Ingreso:</span>{' '}
+                    <strong>{r.hora_ingreso_oficial ? new Date(r.hora_ingreso_oficial).toLocaleTimeString('es-BO', { hour: '2-digit', minute: '2-digit' }) : 'N/D'}</strong>
+                    {r.firma_ingreso && <span className="ml-1 text-[10px] text-emerald-700 font-bold">(Firmado ✓)</span>}
+                  </div>
+                  <div>
+                    <span>Salida:</span>{' '}
+                    <strong>{r.hora_salida_oficial ? new Date(r.hora_salida_oficial).toLocaleTimeString('es-BO', { hour: '2-digit', minute: '2-digit' }) : 'N/D'}</strong>
+                    {r.firma_salida && <span className="ml-1 text-[10px] text-emerald-700 font-bold">(Firmado ✓)</span>}
+                  </div>
+                  <div>
+                    <span>Horas trabajadas:</span> <strong>{r.horas_trabajadas} hrs</strong>
+                  </div>
+                  <div>
+                    <span>Origen:</span>{' '}
+                    <strong className={r.origen_registro === 'sin_conexion' ? 'text-amber-700' : 'text-emerald-700'}>
+                      {r.origen_registro === 'sin_conexion' ? 'Sin conexión (Offline)' : 'En Línea'}
+                    </strong>
+                  </div>
+                </div>
+
+                {/* GPS & Selfie Verification Box */}
+                <div className="p-2.5 bg-white rounded-xl border border-slate-200 space-y-1.5 text-[11px]">
+                  <div className="flex justify-between items-center font-bold text-slate-800">
+                    <span className="flex items-center gap-1 text-[#17324D]">
+                      <MapPin className="w-3.5 h-3.5 text-[#00A651]" />
+                      <span>Verificación GPS y Selfie</span>
+                    </span>
+                    {r.distancia_m_ingreso !== undefined ? (
+                      <span className="text-slate-600 font-extrabold">Distancia: {r.distancia_m_ingreso}m</span>
+                    ) : (
+                      <span className="text-slate-400 font-normal">GPS Estándar</span>
+                    )}
+                  </div>
+
+                  {r.precision_gps_ingreso && (
+                    <p className="text-slate-500 font-medium">
+                      Precisión GPS: ±{r.precision_gps_ingreso}m • Coordenadas: {r.latitud_ingreso?.toFixed(5)}, {r.longitud_ingreso?.toFixed(5)}
+                    </p>
+                  )}
+
+                  {r.selfie_url && (
+                    <div className="pt-1 flex items-center justify-between border-t border-slate-100">
+                      <span className="text-slate-600 font-semibold flex items-center gap-1">
+                        <Camera className="w-3.5 h-3.5 text-[#00A651]" />
+                        Selfie de Entrada Registrada
+                      </span>
+                      <button
+                        onClick={() => setSelectedSelfieUrl(r.selfie_url || null)}
+                        className="px-2.5 py-1 bg-emerald-50 hover:bg-emerald-100 text-[#00A651] border border-emerald-200 rounded-lg font-extrabold flex items-center gap-1 text-[10px]"
+                      >
+                        <Eye className="w-3 h-3" />
+                        <span>Ver Selfie</span>
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Exception Handling Box */}
+                  {r.observacion_excepcion && (
+                    <div className="p-2 bg-amber-50 border border-amber-200 rounded-lg text-amber-950 font-medium space-y-1 mt-1">
+                      <div className="flex justify-between items-center font-bold">
+                        <span className="flex items-center gap-1 text-amber-900">
+                          <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
+                          Observación de Excepción
+                        </span>
+                        <span className={`px-2 py-0.5 rounded-md text-[9px] font-extrabold uppercase ${
+                          r.estado_excepcion === 'aprobada'
+                            ? 'bg-emerald-100 text-emerald-800'
+                            : r.estado_excepcion === 'rechazada'
+                            ? 'bg-red-100 text-red-800'
+                            : 'bg-amber-100 text-amber-900'
+                        }`}>
+                          {r.estado_excepcion === 'pendiente_revision' ? 'Pendiente de Revisión' : r.estado_excepcion || 'Excepción'}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-amber-900">{r.observacion_excepcion}</p>
+
+                      {/* Director / Admin Exception Action Buttons */}
+                      {isDirectorOrAdmin && r.estado_excepcion === 'pendiente_revision' && (
+                        <div className="pt-1 flex gap-2">
+                          <button
+                            onClick={() => handleApproveException(r.id)}
+                            className="flex-1 py-1 bg-[#00A651] hover:bg-[#008f45] text-white rounded-md font-bold text-[10px] flex items-center justify-center gap-1"
+                          >
+                            <Check className="w-3 h-3 text-emerald-200" />
+                            <span>Aprobar Excepción</span>
+                          </button>
+                          <button
+                            onClick={() => handleRejectException(r.id)}
+                            className="flex-1 py-1 bg-red-600 hover:bg-red-700 text-white rounded-md font-bold text-[10px] flex items-center justify-center gap-1"
+                          >
+                            <X className="w-3 h-3" />
+                            <span>Rechazar</span>
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   )}
                 </div>
 
-                {r.precision_gps_ingreso && (
-                  <p className="text-slate-500 font-medium">
-                    Precisión GPS: ±{r.precision_gps_ingreso}m • Coordenadas: {r.latitud_ingreso?.toFixed(5)}, {r.longitud_ingreso?.toFixed(5)}
+                {/* Multigrade activities display */}
+                {r.actividades_multigrado && r.actividades_multigrado.length > 0 && (
+                  <div className="mt-2 pt-2 border-t border-slate-200 space-y-1.5">
+                    <span className="text-[11px] font-bold text-slate-500 uppercase block">Avance Pedagógico por Nivel (Multigrado):</span>
+                    <div className="space-y-1">
+                      {r.actividades_multigrado.map((act) => (
+                        <div key={act.id} className="bg-white p-2.5 rounded-xl border border-slate-200 text-[11px] space-y-0.5">
+                          <div className="flex items-center gap-1.5 font-bold text-[#17324D]">
+                            <span className="px-1.5 py-0.5 bg-emerald-100 text-emerald-800 rounded-md text-[10px]">
+                              {act.area_nivel}
+                            </span>
+                            <span>{act.subnivel}</span>
+                            {act.carrera && (
+                              <span className="text-amber-700 font-semibold">• Carrera: {act.carrera}</span>
+                            )}
+                          </div>
+                          <p className="text-slate-600 font-normal pl-1">
+                            <strong className="text-slate-700">Actividad pedagógica:</strong> {act.actividad_pedagogica}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {r.observacion && (
+                  <p className="text-[11px] text-slate-500 bg-white p-2 rounded-xl border border-slate-200">
+                    {r.observacion}
                   </p>
                 )}
-
-                {r.selfie_url && (
-                  <div className="pt-1 flex items-center justify-between border-t border-slate-100">
-                    <span className="text-slate-600 font-semibold flex items-center gap-1">
-                      <Camera className="w-3.5 h-3.5 text-[#00A651]" />
-                      Selfie de Entrada Registrada
-                    </span>
-                    <button
-                      onClick={() => setSelectedSelfieUrl(r.selfie_url || null)}
-                      className="px-2.5 py-1 bg-emerald-50 hover:bg-emerald-100 text-[#00A651] border border-emerald-200 rounded-lg font-extrabold flex items-center gap-1 text-[10px]"
-                    >
-                      <Eye className="w-3 h-3" />
-                      <span>Ver Selfie</span>
-                    </button>
-                  </div>
-                )}
-
-                {/* Exception Handling Box */}
-                {r.observacion_excepcion && (
-                  <div className="p-2 bg-amber-50 border border-amber-200 rounded-lg text-amber-950 font-medium space-y-1 mt-1">
-                    <div className="flex justify-between items-center font-bold">
-                      <span className="flex items-center gap-1 text-amber-900">
-                        <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
-                        Observación de Excepción
-                      </span>
-                      <span className={`px-2 py-0.5 rounded-md text-[9px] font-extrabold uppercase ${
-                        r.estado_excepcion === 'aprobada'
-                          ? 'bg-emerald-100 text-emerald-800'
-                          : r.estado_excepcion === 'rechazada'
-                          ? 'bg-red-100 text-red-800'
-                          : 'bg-amber-100 text-amber-900'
-                      }`}>
-                        {r.estado_excepcion === 'pendiente_revision' ? 'Pendiente de Revisión' : r.estado_excepcion || 'Excepción'}
-                      </span>
-                    </div>
-                    <p className="text-[11px] text-amber-900">{r.observacion_excepcion}</p>
-
-                    {/* Director / Admin Exception Action Buttons */}
-                    {isDirectorOrAdmin && r.estado_excepcion === 'pendiente_revision' && (
-                      <div className="pt-1 flex gap-2">
-                        <button
-                          onClick={() => handleApproveException(r.id)}
-                          className="flex-1 py-1 bg-[#00A651] hover:bg-[#008f45] text-white rounded-md font-bold text-[10px] flex items-center justify-center gap-1"
-                        >
-                          <Check className="w-3 h-3 text-emerald-200" />
-                          <span>Aprobar Excepción</span>
-                        </button>
-                        <button
-                          onClick={() => handleRejectException(r.id)}
-                          className="flex-1 py-1 bg-red-600 hover:bg-red-700 text-white rounded-md font-bold text-[10px] flex items-center justify-center gap-1"
-                        >
-                          <X className="w-3 h-3" />
-                          <span>Rechazar</span>
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                )}
               </div>
-
-              {/* Multigrade activities display */}
-              {r.actividades_multigrado && r.actividades_multigrado.length > 0 && (
-                <div className="mt-2 pt-2 border-t border-slate-200 space-y-1.5">
-                  <span className="text-[11px] font-bold text-slate-500 uppercase block">Avance Pedagógico por Nivel (Multigrado):</span>
-                  <div className="space-y-1">
-                    {r.actividades_multigrado.map((act) => (
-                      <div key={act.id} className="bg-white p-2.5 rounded-xl border border-slate-200 text-[11px] space-y-0.5">
-                        <div className="flex items-center gap-1.5 font-bold text-[#17324D]">
-                          <span className="px-1.5 py-0.5 bg-emerald-100 text-emerald-800 rounded-md text-[10px]">
-                            {act.area_nivel}
-                          </span>
-                          <span>{act.subnivel}</span>
-                          {act.carrera && (
-                            <span className="text-amber-700 font-semibold">• Carrera: {act.carrera}</span>
-                          )}
-                        </div>
-                        <p className="text-slate-600 font-normal pl-1">
-                          <strong className="text-slate-700">Actividad pedagógica:</strong> {act.actividad_pedagogica}
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {r.observacion && (
-                <p className="text-[11px] text-slate-500 bg-white p-2 rounded-xl border border-slate-200">
-                  {r.observacion}
-                </p>
-              )}
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Selfie Modal View */}
