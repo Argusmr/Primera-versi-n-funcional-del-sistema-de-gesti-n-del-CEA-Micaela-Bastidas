@@ -313,9 +313,11 @@ export function App() {
 
       {showPublishModal && (
         <PublishModal
+          user={currentUser}
           onClose={() => setShowPublishModal(false)}
           onSuccess={() => {
             setShowPublishModal(false);
+            window.dispatchEvent(new Event('publicacion-creada'));
           }}
         />
       )}

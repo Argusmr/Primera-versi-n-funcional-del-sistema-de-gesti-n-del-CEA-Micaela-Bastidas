@@ -758,7 +758,12 @@ export const AddStudentModal: React.FC<{ onClose: () => void; onSuccess: () => v
 };
 
 // 3. PUBLISH DOCUMENT MODAL
-export const PublishModal: React.FC<{ onClose: () => void; onSuccess: () => void }> = ({
+export const PublishModal: React.FC<{
+  user?: Perfil;
+  onClose: () => void;
+  onSuccess: () => void;
+}> = ({
+  user,
   onClose,
   onSuccess
 }) => {
@@ -766,12 +771,98 @@ export const PublishModal: React.FC<{ onClose: () => void; onSuccess: () => void
   const [descripcion, setDescripcion] = useState('');
   const [categoria, setCategoria] = useState<CategoriaPublicacion>('anuncios');
   const [destacado, setDestacado] = useState(false);
-  const [fileName, setFileName] = useState<string | null>(null);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  const handlePublish = (e: React.FormEvent) => {
+  const detectTipoArchivo = (file: File | null): 'pdf' | 'excel' | 'word' | 'imagen' | 'ninguno' => {
+    if (!file) return 'ninguno';
+    const name = file.name.toLowerCase();
+    const type = file.type.toLowerCase();
+    if (name.endsWith('.pdf') || type.includes('pdf')) return 'pdf';
+    if (name.endsWith('.xls') || name.endsWith('.xlsx') || name.endsWith('.csv') || type.includes('excel') || type.includes('spreadsheet') || type.includes('csv')) return 'excel';
+    if (name.endsWith('.doc') || name.endsWith('.docx') || type.includes('word') || type.includes('wordprocessingml')) return 'word';
+    if (type.startsWith('image/') || name.endsWith('.png') || name.endsWith('.jpg') || name.endsWith('.jpeg') || name.endsWith('.webp')) return 'imagen';
+    return 'ninguno';
+  };
+
+  const handlePublish = async (e: React.FormEvent) => {
     e.preventDefault();
-    onSuccess();
-    onClose();
+    if (!titulo.trim() || !descripcion.trim()) {
+      setErrorMsg('El título y la descripción son obligatorios.');
+      return;
+    }
+
+    if (!isSupabaseConfigured || !supabase) {
+      setErrorMsg('Supabase no está configurado. No se puede publicar el documento.');
+      return;
+    }
+
+    try {
+      setLoading(true);
+      setErrorMsg(null);
+
+      let publicUrl: string | null = null;
+      let nombreArchivo: string | null = null;
+      let tipoArchivo: 'pdf' | 'excel' | 'word' | 'imagen' | 'ninguno' = 'ninguno';
+
+      if (selectedFile) {
+        tipoArchivo = detectTipoArchivo(selectedFile);
+        nombreArchivo = selectedFile.name;
+
+        const fileExt = selectedFile.name.split('.').pop() || 'bin';
+        const cleanBase = selectedFile.name
+          .replace(/\.[^/.]+$/, '')
+          .replace(/[^a-zA-Z0-9_-]/g, '_')
+          .slice(0, 40);
+        const filePath = `${Date.now()}_${cleanBase}.${fileExt}`;
+
+        const { error: uploadError } = await supabase.storage
+          .from('documentos_institucionales')
+          .upload(filePath, selectedFile, {
+            cacheControl: '3600',
+            upsert: false
+          });
+
+        if (uploadError) {
+          throw new Error(`Error al subir archivo a Storage: ${uploadError.message}`);
+        }
+
+        const { data: urlData } = supabase.storage
+          .from('documentos_institucionales')
+          .getPublicUrl(filePath);
+
+        publicUrl = urlData?.publicUrl || null;
+      }
+
+      const { error: insertError } = await supabase
+        .from('publicaciones')
+        .insert({
+          titulo: titulo.trim(),
+          descripcion: descripcion.trim(),
+          categoria,
+          destacado,
+          archivo_url: publicUrl,
+          nombre_archivo: nombreArchivo,
+          tipo_archivo: tipoArchivo,
+          autor_id: user?.id || null,
+          fecha: new Date().toISOString().slice(0, 10),
+          archivado: false
+        });
+
+      if (insertError) {
+        throw new Error(`Error al registrar publicación: ${insertError.message}`);
+      }
+
+      window.dispatchEvent(new Event('publicacion-creada'));
+      onSuccess();
+      onClose();
+    } catch (err: any) {
+      console.error('Error publicando documento:', err);
+      setErrorMsg(err.message || 'Ocurrió un error al publicar el documento.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -782,10 +873,17 @@ export const PublishModal: React.FC<{ onClose: () => void; onSuccess: () => void
             <FilePlus className="w-6 h-6 text-[#00A651]" />
             Publicar Aviso o Documento
           </h3>
-          <button onClick={onClose} className="p-1 text-slate-400 hover:text-slate-600">
+          <button onClick={onClose} disabled={loading} className="p-1 text-slate-400 hover:text-slate-600 disabled:opacity-50">
             <X className="w-6 h-6" />
           </button>
         </div>
+
+        {errorMsg && (
+          <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded-2xl text-xs flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 shrink-0 text-red-500" />
+            <span>{errorMsg}</span>
+          </div>
+        )}
 
         <form onSubmit={handlePublish} className="space-y-3 text-xs">
           <div>
@@ -795,17 +893,19 @@ export const PublishModal: React.FC<{ onClose: () => void; onSuccess: () => void
               value={titulo}
               onChange={e => setTitulo(e.target.value)}
               placeholder="Ej. Instructivo de Evaluaciones Semestrales 2026"
-              className="w-full h-11 px-3 border border-slate-300 rounded-xl font-medium"
+              className="w-full h-11 px-3 border border-slate-300 rounded-xl font-medium outline-none focus:border-[#00A651]"
               required
+              disabled={loading}
             />
           </div>
 
           <div>
-            <label className="block font-bold text-slate-700 mb-1">Categoría</label>
+            <label className="block font-bold text-slate-700 mb-1">Categoría *</label>
             <select
               value={categoria}
               onChange={e => setCategoria(e.target.value as CategoriaPublicacion)}
-              className="w-full h-11 px-3 border border-slate-300 rounded-xl font-bold bg-slate-50"
+              className="w-full h-11 px-3 border border-slate-300 rounded-xl font-bold bg-slate-50 outline-none focus:border-[#00A651]"
+              disabled={loading}
             >
               <option value="anuncios">Anuncios</option>
               <option value="comunicados">Comunicados</option>
@@ -826,18 +926,26 @@ export const PublishModal: React.FC<{ onClose: () => void; onSuccess: () => void
               value={descripcion}
               onChange={e => setDescripcion(e.target.value)}
               placeholder="Escriba la información o el detalle del comunicado..."
-              className="w-full p-3 border border-slate-300 rounded-xl font-medium outline-none"
+              className="w-full p-3 border border-slate-300 rounded-xl font-medium outline-none focus:border-[#00A651]"
               required
+              disabled={loading}
             />
           </div>
 
           <div>
-            <label className="block font-bold text-slate-700 mb-1">Adjuntar Archivo (PDF, Imagen, Word, Excel)</label>
+            <label className="block font-bold text-slate-700 mb-1">Adjuntar Archivo (Opcional - PDF, Word, Excel, Imagen)</label>
             <input
               type="file"
-              onChange={e => e.target.files?.[0] && setFileName(e.target.files[0].name)}
-              className="w-full text-xs font-medium text-slate-500 file:mr-2 file:py-2 file:px-3 file:rounded-xl file:border-0 file:bg-emerald-50 file:text-[#00A651] file:font-bold"
+              accept=".pdf,.doc,.docx,.xls,.xlsx,image/*"
+              onChange={e => setSelectedFile(e.target.files?.[0] || null)}
+              className="w-full text-xs font-medium text-slate-500 file:mr-2 file:py-2 file:px-3 file:rounded-xl file:border-0 file:bg-emerald-50 file:text-[#00A651] file:font-bold cursor-pointer"
+              disabled={loading}
             />
+            {selectedFile && (
+              <p className="text-[11px] text-emerald-700 font-bold mt-1">
+                ✓ Archivo seleccionado: {selectedFile.name} ({(selectedFile.size / 1024).toFixed(1)} KB)
+              </p>
+            )}
           </div>
 
           <div className="flex items-center gap-2 pt-1">
@@ -847,6 +955,7 @@ export const PublishModal: React.FC<{ onClose: () => void; onSuccess: () => void
               checked={destacado}
               onChange={e => setDestacado(e.target.checked)}
               className="w-4 h-4 text-[#00A651] rounded"
+              disabled={loading}
             />
             <label htmlFor="chk-destacado" className="font-bold text-slate-800 cursor-pointer">
               Marcar como anuncio destacado
@@ -854,11 +963,27 @@ export const PublishModal: React.FC<{ onClose: () => void; onSuccess: () => void
           </div>
 
           <div className="flex gap-2 pt-2">
-            <button type="button" onClick={onClose} className="flex-1 h-12 border border-slate-300 rounded-xl font-bold text-slate-600">
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={loading}
+              className="flex-1 h-12 border border-slate-300 rounded-xl font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+            >
               Cancelar
             </button>
-            <button type="submit" className="flex-1 h-12 bg-[#00A651] text-white rounded-xl font-bold">
-              Publicar Ahora
+            <button
+              type="submit"
+              disabled={loading}
+              className="flex-1 h-12 bg-[#00A651] hover:bg-[#008f45] text-white rounded-xl font-bold flex items-center justify-center gap-2 disabled:opacity-50 transition-colors"
+            >
+              {loading ? (
+                <>
+                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  <span>Publicando...</span>
+                </>
+              ) : (
+                <span>Publicar Ahora</span>
+              )}
             </button>
           </div>
         </form>
