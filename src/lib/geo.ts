@@ -2,6 +2,16 @@
  * Geographic and Media utilities for GPS validation and Selfie compression.
  */
 
+// Helper to obtain the official Bolivia date string (YYYY-MM-DD) for America/La_Paz
+export function getBoliviaTodayDate(date: Date = new Date()): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/La_Paz',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).format(date);
+}
+
 // Haversine formula to compute distance in meters between two lat/lon coordinates
 export function calculateDistanceMeters(
   lat1: number,

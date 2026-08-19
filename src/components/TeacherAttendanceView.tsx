@@ -131,15 +131,18 @@ export const TeacherAttendanceView: React.FC<TeacherAttendanceViewProps> = ({ us
   };
 
   const handleApproveException = async (recordId: string) => {
+    const record = recordsState.find(r => r.id === recordId);
+    const estadoFinal = (record?.minutos_atraso && record.minutos_atraso > 0) ? 'atraso' : 'puntual';
+
     setRecordsState(prev =>
-      prev.map(r => (r.id === recordId ? { ...r, estado_excepcion: 'aprobada', estado: 'puntual' } : r))
+      prev.map(r => (r.id === recordId ? { ...r, estado_excepcion: 'aprobada', estado: estadoFinal } : r))
     );
     if (supabase) {
       await supabase
         .from('asistencias_docentes')
         .update({
           estado_excepcion: 'aprobada',
-          estado: 'puntual',
+          estado: estadoFinal,
           validado_por: user.id,
           fecha_validacion: new Date().toISOString()
         })
@@ -149,14 +152,14 @@ export const TeacherAttendanceView: React.FC<TeacherAttendanceViewProps> = ({ us
 
   const handleRejectException = async (recordId: string) => {
     setRecordsState(prev =>
-      prev.map(r => (r.id === recordId ? { ...r, estado_excepcion: 'rechazada', estado: 'atraso' } : r))
+      prev.map(r => (r.id === recordId ? { ...r, estado_excepcion: 'rechazada', estado: 'falta' } : r))
     );
     if (supabase) {
       await supabase
         .from('asistencias_docentes')
         .update({
           estado_excepcion: 'rechazada',
-          estado: 'atraso',
+          estado: 'falta',
           validado_por: user.id,
           fecha_validacion: new Date().toISOString()
         })

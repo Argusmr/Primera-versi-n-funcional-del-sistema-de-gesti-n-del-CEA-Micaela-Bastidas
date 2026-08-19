@@ -12,7 +12,7 @@ import {
   Check
 } from 'lucide-react';
 import { Perfil, AsistenciaDocente, Sede, EstadoGPS, EstadoExcepcion } from '../types';
-import { getCurrentGPSPosition, calculateDistanceMeters, LocationResult } from '../lib/geo';
+import { getCurrentGPSPosition, calculateDistanceMeters, LocationResult, getBoliviaTodayDate } from '../lib/geo';
 import { SelfieCameraModal } from './SelfieCameraModal';
 import { supabase } from '../lib/supabase';
 import { saveOfflineDocenteAsistencia } from '../lib/db';
@@ -203,7 +203,7 @@ export const ClockInVerificationModal: React.FC<ClockInVerificationModalProps> =
     setIsSubmitting(true);
     setErrorMessage(null);
 
-    const todayStr = new Date().toISOString().slice(0, 10);
+    const todayStr = getBoliviaTodayDate();
     const syncKey = `ingreso-${user.id}-${todayStr}-${Date.now()}`;
     const localIso = new Date().toISOString();
     const estadoExcepcion: EstadoExcepcion = needsException ? 'pendiente_revision' : 'ninguna';

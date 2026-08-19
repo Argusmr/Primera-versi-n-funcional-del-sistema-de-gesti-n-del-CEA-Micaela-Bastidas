@@ -23,7 +23,7 @@ import { Perfil, AsistenciaDocente, FilaActividadPedagogica, ControlDocumental }
 import { supabase } from '../lib/supabase';
 import { saveOfflineDocenteAsistencia } from '../lib/db';
 import { MOCK_ASISTENCIAS_DOCENTES } from '../lib/mockData';
-import { getCurrentGPSPosition } from '../lib/geo';
+import { getCurrentGPSPosition, getBoliviaTodayDate } from '../lib/geo';
 import { ClockInVerificationModal } from './ClockInVerificationModal';
 import { ControlDocumentalCard } from './ControlDocumentalCard';
 import { EditControlDocumentalModal } from './EditControlDocumentalModal';
@@ -103,8 +103,9 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
   const [asistenciaPorcentaje] = useState<number>(95.8);
   const [puntualidadPorcentaje] = useState<number>(91.5);
 
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayStr = getBoliviaTodayDate();
   const currentDateFormatted = new Date().toLocaleDateString('es-BO', {
+    timeZone: 'America/La_Paz',
     weekday: 'long',
     year: 'numeric',
     month: 'long',

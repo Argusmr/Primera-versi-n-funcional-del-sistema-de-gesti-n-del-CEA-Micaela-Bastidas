@@ -12,11 +12,17 @@ import {
   Loader2,
   AlertCircle,
   RefreshCw,
-  Building2
+  Building2,
+  Check,
+  X,
+  Eye,
+  Camera,
+  MapPin
 } from 'lucide-react';
 import { Perfil, AsistenciaDocente, Estudiante, DatosInstitucionales, Sede } from '../types';
 import { getLocalDatosInstitucionales } from '../lib/institutional';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { getBoliviaTodayDate } from '../lib/geo';
 
 interface DirectorDashboardProps {
   user: Perfil;
@@ -51,22 +57,31 @@ export const DirectorDashboard: React.FC<DirectorDashboardProps> = ({
   // Loading & error state
   const [loading, setLoading] = useState<boolean>(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
+  const [actionProcessingId, setActionProcessingId] = useState<string | null>(null);
+  const [previewSelfieUrl, setPreviewSelfieUrl] = useState<string | null>(null);
 
   const todayStr = new Date().toLocaleDateString('es-BO', {
+    timeZone: 'America/La_Paz',
     weekday: 'long',
     day: 'numeric',
     month: 'long',
     year: 'numeric'
   });
 
-  // Calculate local date format YYYY-MM-DD for today's queries
-  const todayIsoDate = useMemo(() => {
-    const now = new Date();
-    const year = now.getFullYear();
-    const month = String(now.getMonth() + 1).padStart(2, '0');
-    const day = String(now.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
-  }, []);
+  // Calculate local date format YYYY-MM-DD for today's queries in America/La_Paz timezone
+  const todayIsoDate = useMemo(() => getBoliviaTodayDate(), []);
+
+  const getSelfieFullUrl = (urlOrPath: string | null | undefined): string | null => {
+    if (!urlOrPath) return null;
+    if (urlOrPath.startsWith('http://') || urlOrPath.startsWith('https://') || urlOrPath.startsWith('data:')) {
+      return urlOrPath;
+    }
+    if (supabase) {
+      const { data } = supabase.storage.from('selfies-asistencia').getPublicUrl(urlOrPath);
+      return data?.publicUrl || null;
+    }
+    return null;
+  };
 
   const loadDashboardData = useCallback(async () => {
     if (!isSupabaseConfigured || !supabase) {
@@ -221,6 +236,64 @@ export const DirectorDashboard: React.FC<DirectorDashboardProps> = ({
   const docentesPuntuales = filteredAsistencias.filter(a => a.estado === 'puntual').length;
   const docentesAtrasados = filteredAsistencias.filter(a => a.estado === 'atraso').length;
   const registrosOfflineCount = filteredAsistencias.filter(a => a.origen_registro === 'sin_conexion').length;
+
+  // Pending exceptions requiring Director approval
+  const pendingExceptions = filteredAsistencias.filter(a => a.estado_excepcion === 'pendiente_revision');
+
+  const handleApproveException = async (recordId: string) => {
+    if (!supabase) return;
+    setActionProcessingId(recordId);
+    try {
+      const record = filteredAsistencias.find(a => a.id === recordId);
+      const estadoFinal = (record?.minutos_atraso && record.minutos_atraso > 0) ? 'atraso' : 'puntual';
+
+      const { error } = await supabase
+        .from('asistencias_docentes')
+        .update({
+          estado_excepcion: 'aprobada',
+          estado: estadoFinal,
+          validado_por: user.id,
+          fecha_validacion: new Date().toISOString()
+        })
+        .eq('id', recordId);
+
+      if (error) {
+        alert('Error al aprobar excepción: ' + error.message);
+      } else {
+        await loadDashboardData();
+      }
+    } catch (err: any) {
+      alert('Excepción al aprobar: ' + (err.message || err));
+    } finally {
+      setActionProcessingId(null);
+    }
+  };
+
+  const handleRejectException = async (recordId: string) => {
+    if (!supabase) return;
+    setActionProcessingId(recordId);
+    try {
+      const { error } = await supabase
+        .from('asistencias_docentes')
+        .update({
+          estado_excepcion: 'rechazada',
+          estado: 'falta',
+          validado_por: user.id,
+          fecha_validacion: new Date().toISOString()
+        })
+        .eq('id', recordId);
+
+      if (error) {
+        alert('Error al rechazar excepción: ' + error.message);
+      } else {
+        await loadDashboardData();
+      }
+    } catch (err: any) {
+      alert('Excepción al rechazar: ' + (err.message || err));
+    } finally {
+      setActionProcessingId(null);
+    }
+  };
 
   // Student Statistics calculations (strictly based on public.estudiantes)
   const totalEstudiantes = filteredEstudiantes.length;
@@ -399,6 +472,124 @@ export const DirectorDashboard: React.FC<DirectorDashboardProps> = ({
               </div>
             </div>
 
+            {/* Pending Exceptions Validation Section */}
+            {pendingExceptions.length > 0 && (
+              <div className="p-4 bg-amber-50/90 border-2 border-amber-300 rounded-3xl space-y-3 shadow-xs">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0" />
+                    <h4 className="font-extrabold text-sm text-amber-950">
+                      Excepciones de Asistencia Pendientes ({pendingExceptions.length})
+                    </h4>
+                  </div>
+                  <span className="text-[10px] font-bold text-amber-800 bg-amber-200/80 px-2.5 py-0.5 rounded-full">
+                    Requiere Validación
+                  </span>
+                </div>
+
+                <div className="space-y-3">
+                  {pendingExceptions.map((a) => {
+                    const fullSelfie = getSelfieFullUrl(a.selfie_url);
+                    const isProcessing = actionProcessingId === a.id;
+
+                    return (
+                      <div
+                        key={a.id}
+                        className="p-3.5 bg-white rounded-2xl border border-amber-200 shadow-xs space-y-3"
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div>
+                            <span className="font-extrabold text-sm text-[#17324D] block">
+                              {a.docente_nombre}
+                            </span>
+                            <span className="text-xs text-slate-500 font-medium flex items-center gap-1 mt-0.5">
+                              <MapPin className="w-3.5 h-3.5 text-slate-400" />
+                              {a.sede_nombre}
+                              {a.hora_ingreso_oficial && (
+                                <span className="ml-1 text-slate-400">
+                                  • {new Date(a.hora_ingreso_oficial).toLocaleTimeString('es-BO', { timeZone: 'America/La_Paz', hour: '2-digit', minute: '2-digit' })}
+                                </span>
+                              )}
+                            </span>
+                          </div>
+
+                          <span className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold bg-amber-100 text-amber-900 border border-amber-300 uppercase">
+                            {a.estado_gps_ingreso || 'gps_impreciso'}
+                          </span>
+                        </div>
+
+                        {/* Motivo / Justificación */}
+                        <div className="p-2.5 bg-slate-50 rounded-xl border border-slate-200 space-y-1 text-xs">
+                          <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wide block">
+                            Motivo / Observación del Docente:
+                          </span>
+                          <p className="text-xs text-slate-800 font-medium italic">
+                            "{a.observacion_excepcion || a.observacion || 'Sin motivo detallado'}"
+                          </p>
+                        </div>
+
+                        {/* GPS metrics and Selfie preview button */}
+                        <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-600 pt-1">
+                          <div className="flex items-center gap-3">
+                            <span>
+                              Distancia:{' '}
+                              <strong className="text-slate-800">
+                                {a.distancia_m_ingreso !== undefined && a.distancia_m_ingreso !== null
+                                  ? `${a.distancia_m_ingreso} m`
+                                  : 'N/D'}
+                              </strong>
+                            </span>
+                            <span>
+                              Precisión:{' '}
+                              <strong className="text-slate-800">
+                                {a.precision_gps_ingreso !== undefined && a.precision_gps_ingreso !== null
+                                  ? `±${a.precision_gps_ingreso} m`
+                                  : 'N/D'}
+                              </strong>
+                            </span>
+                          </div>
+
+                          {fullSelfie && (
+                            <button
+                              type="button"
+                              onClick={() => setPreviewSelfieUrl(fullSelfie)}
+                              className="px-2.5 py-1 bg-emerald-50 hover:bg-emerald-100 text-[#00A651] border border-emerald-300 rounded-xl font-bold text-xs flex items-center gap-1.5 transition-all"
+                            >
+                              <Eye className="w-3.5 h-3.5" />
+                              <span>Ver Selfie</span>
+                            </button>
+                          )}
+                        </div>
+
+                        {/* Approve / Reject Action Buttons */}
+                        <div className="flex items-center gap-2 pt-1 border-t border-slate-100">
+                          <button
+                            type="button"
+                            disabled={isProcessing}
+                            onClick={() => handleApproveException(a.id)}
+                            className="flex-1 h-10 bg-[#00A651] hover:bg-[#008f45] active:scale-[0.98] text-white rounded-xl font-extrabold text-xs flex items-center justify-center gap-1.5 shadow-sm transition-all disabled:opacity-50"
+                          >
+                            <Check className="w-4 h-4 text-emerald-200" />
+                            <span>{isProcessing ? 'Procesando...' : 'Aprobar'}</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            disabled={isProcessing}
+                            onClick={() => handleRejectException(a.id)}
+                            className="flex-1 h-10 bg-red-600 hover:bg-red-700 active:scale-[0.98] text-white rounded-xl font-extrabold text-xs flex items-center justify-center gap-1.5 shadow-sm transition-all disabled:opacity-50"
+                          >
+                            <X className="w-4 h-4 text-red-200" />
+                            <span>{isProcessing ? 'Procesando...' : 'Rechazar'}</span>
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             {/* Teacher shift status list */}
             <div className="space-y-2 pt-2">
               <h4 className="text-xs font-extrabold text-slate-500 uppercase tracking-wider">Estado de Jornada Hoy ({todayIsoDate})</h4>
@@ -407,33 +598,60 @@ export const DirectorDashboard: React.FC<DirectorDashboardProps> = ({
                   No se registran marcaciones docentes para la fecha laboral de hoy.
                 </div>
               ) : (
-                filteredAsistencias.map((a) => (
-                  <div
-                    key={a.id}
-                    className="p-3 bg-slate-50 rounded-2xl border border-slate-200 flex items-center justify-between text-xs"
-                  >
-                    <div>
-                      <span className="font-bold text-[#17324D] block text-sm">{a.docente_nombre}</span>
-                      <span className="text-slate-500">{a.sede_nombre}</span>
+                filteredAsistencias.map((a) => {
+                  const selfieUrl = getSelfieFullUrl(a.selfie_url);
+                  return (
+                    <div
+                      key={a.id}
+                      className="p-3 bg-slate-50 rounded-2xl border border-slate-200 flex items-center justify-between text-xs"
+                    >
+                      <div>
+                        <span className="font-bold text-[#17324D] block text-sm">{a.docente_nombre}</span>
+                        <span className="text-slate-500">{a.sede_nombre}</span>
+                        {a.estado_excepcion && a.estado_excepcion !== 'ninguna' && (
+                          <div className="mt-1 flex items-center gap-1.5">
+                            <span
+                              className={`inline-block px-2 py-0.5 rounded-md font-bold text-[9px] uppercase ${
+                                a.estado_excepcion === 'aprobada'
+                                  ? 'bg-emerald-100 text-emerald-800'
+                                  : a.estado_excepcion === 'rechazada'
+                                  ? 'bg-red-100 text-red-800'
+                                  : 'bg-amber-100 text-amber-900'
+                              }`}
+                            >
+                              Excepción: {a.estado_excepcion}
+                            </span>
+                            {selfieUrl && (
+                              <button
+                                type="button"
+                                onClick={() => setPreviewSelfieUrl(selfieUrl)}
+                                className="text-slate-500 hover:text-[#00A651] font-bold text-[10px] underline flex items-center gap-0.5"
+                              >
+                                <Eye className="w-3 h-3" /> Selfie
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                      <div className="text-right">
+                        <span
+                          className={`inline-block px-2.5 py-1 rounded-full font-bold uppercase text-[10px] ${
+                            a.estado === 'puntual'
+                              ? 'bg-emerald-100 text-emerald-800'
+                              : a.estado === 'atraso'
+                              ? 'bg-amber-100 text-amber-800'
+                              : 'bg-slate-200 text-slate-700'
+                          }`}
+                        >
+                          {a.estado}
+                        </span>
+                        {a.origen_registro === 'sin_conexion' && (
+                          <span className="block text-[10px] font-bold text-amber-700 mt-0.5">Offline no verificado</span>
+                        )}
+                      </div>
                     </div>
-                    <div className="text-right">
-                      <span
-                        className={`inline-block px-2.5 py-1 rounded-full font-bold uppercase text-[10px] ${
-                          a.estado === 'puntual'
-                            ? 'bg-emerald-100 text-emerald-800'
-                            : a.estado === 'atraso'
-                            ? 'bg-amber-100 text-amber-800'
-                            : 'bg-slate-200 text-slate-700'
-                        }`}
-                      >
-                        {a.estado}
-                      </span>
-                      {a.origen_registro === 'sin_conexion' && (
-                        <span className="block text-[10px] font-bold text-amber-700 mt-0.5">Offline no verificado</span>
-                      )}
-                    </div>
-                  </div>
-                ))
+                  );
+                })
               )}
             </div>
           </div>
@@ -497,6 +715,42 @@ export const DirectorDashboard: React.FC<DirectorDashboardProps> = ({
             </div>
           </div>
         </>
+      )}
+
+      {/* Selfie Preview Modal */}
+      {previewSelfieUrl && (
+        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl p-4 max-w-sm w-full space-y-3 relative shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+              <span className="font-extrabold text-sm text-[#17324D] flex items-center gap-1.5">
+                <Camera className="w-4 h-4 text-[#00A651]" />
+                Selfie de Asistencia
+              </span>
+              <button
+                type="button"
+                onClick={() => setPreviewSelfieUrl(null)}
+                className="p-1 text-slate-400 hover:text-slate-600 rounded-full"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="rounded-2xl overflow-hidden bg-slate-900 border border-slate-200 flex items-center justify-center max-h-80">
+              <img
+                src={previewSelfieUrl}
+                alt="Selfie docente"
+                className="w-full h-auto object-cover max-h-80"
+                referrerPolicy="no-referrer"
+              />
+            </div>
+            <button
+              type="button"
+              onClick={() => setPreviewSelfieUrl(null)}
+              className="w-full py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-extrabold text-xs rounded-xl transition-all"
+            >
+              Cerrar
+            </button>
+          </div>
+        </div>
       )}
     </div>
   );
