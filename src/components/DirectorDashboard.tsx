@@ -238,7 +238,13 @@ export const DirectorDashboard: React.FC<DirectorDashboardProps> = ({
   const registrosOfflineCount = filteredAsistencias.filter(a => a.origen_registro === 'sin_conexion').length;
 
   // Pending exceptions requiring Director approval
-  const pendingExceptions = filteredAsistencias.filter(a => a.estado_excepcion === 'pendiente_revision');
+  const pendingExceptions = filteredAsistencias.filter(
+    a =>
+      (a.estado_excepcion === 'pendiente_revision' ||
+       a.estado === 'pendiente_verificacion') &&
+      a.estado_excepcion !== 'aprobada' &&
+      a.estado_excepcion !== 'rechazada'
+  );
 
   const handleApproveException = async (recordId: string) => {
     if (!supabase) return;
