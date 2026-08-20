@@ -365,44 +365,65 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
           )
         `)
         .eq('docente_id', user.id)
-        .order('fecha', { ascending: false });
+        .order('fecha', { ascending: false })
+        .order('created_at', { ascending: false });
 
       if (error) {
         throw error;
       }
 
-      const items: SesionHistorialItem[] = (data || []).map((s: any) => {
-        const grupoNombre = s.grupos?.nombre || 'Grupo sin nombre';
-        const asistenciasList = Array.isArray(s.asistencias_estudiantes) ? s.asistencias_estudiantes : [];
+      // Garantizar estricta unicidad: exactamente UNA tarjeta por sesiones_clase.id
+      const sessionMap = new Map<string, SesionHistorialItem>();
 
+      (data || []).forEach((s: any) => {
+        if (!s || !s.id || sessionMap.has(s.id)) {
+          return;
+        }
+
+        const grupoNombre = s.grupos?.nombre || 'Grupo sin nombre';
+        const rawAsistencias = Array.isArray(s.asistencias_estudiantes) ? s.asistencias_estudiantes : [];
+
+        // Deduplicar estudiantes por estudiante_id dentro de la sesión para métricas exactas
+        const seenStudents = new Set<string>();
         let presentes = 0;
         let atrasos = 0;
         let faltas = 0;
         let licencias = 0;
+        const detalles: Array<{
+          id: string;
+          estudiante_id: string;
+          nombre_completo: string;
+          codigo_interno?: string;
+          estado: 'presente' | 'atraso' | 'falta' | 'licencia';
+        }> = [];
 
-        const detalles = asistenciasList.map((a: any) => {
+        rawAsistencias.forEach((a: any) => {
+          const estKey = a.estudiante_id || a.id;
+          if (!estKey || seenStudents.has(estKey)) return;
+          seenStudents.add(estKey);
+
           const estado = a.estado as 'presente' | 'atraso' | 'falta' | 'licencia';
           if (estado === 'presente') presentes++;
           else if (estado === 'atraso') atrasos++;
           else if (estado === 'falta') faltas++;
           else if (estado === 'licencia') licencias++;
 
-          return {
+          detalles.push({
             id: a.id,
             estudiante_id: a.estudiante_id,
             nombre_completo: a.estudiantes?.nombre_completo || 'Estudiante',
             codigo_interno: a.estudiantes?.codigo_interno || undefined,
             estado
-          };
+          });
         });
 
         // Ordenar detalles alfabéticamente por nombre de estudiante
-        detalles.sort((a: any, b: any) => a.nombre_completo.localeCompare(b.nombre_completo));
+        detalles.sort((a, b) => a.nombre_completo.localeCompare(b.nombre_completo));
 
-        const total = asistenciasList.length;
+        const total = detalles.length;
         const porcentaje = total > 0 ? Math.round(((presentes + atrasos) / total) * 100) : 0;
 
-        return {
+        sessionMap.set(s.id, {
           id: s.id,
           fecha: s.fecha,
           materia: s.materia,
@@ -415,8 +436,13 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
           total,
           porcentaje,
           detalles
-        };
+        });
       });
+
+      const items = Array.from(sessionMap.values());
+
+      // Ordenar de más reciente a más antiguo por fecha
+      items.sort((a, b) => b.fecha.localeCompare(a.fecha));
 
       setHistorialSesiones(items);
     } catch (err: any) {
