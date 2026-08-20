@@ -58,6 +58,11 @@ export const DirectorDashboard: React.FC<DirectorDashboardProps> = ({
   const [loading, setLoading] = useState<boolean>(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [actionProcessingId, setActionProcessingId] = useState<string | null>(null);
+  
+  // Selfie modal and signed URL state
+  const [isSelfieModalOpen, setIsSelfieModalOpen] = useState<boolean>(false);
+  const [loadingSelfie, setLoadingSelfie] = useState<boolean>(false);
+  const [selfieError, setSelfieError] = useState<string | null>(null);
   const [previewSelfieUrl, setPreviewSelfieUrl] = useState<string | null>(null);
 
   const todayStr = new Date().toLocaleDateString('es-BO', {
@@ -71,16 +76,53 @@ export const DirectorDashboard: React.FC<DirectorDashboardProps> = ({
   // Calculate local date format YYYY-MM-DD for today's queries in America/La_Paz timezone
   const todayIsoDate = useMemo(() => getBoliviaTodayDate(), []);
 
-  const getSelfieFullUrl = (urlOrPath: string | null | undefined): string | null => {
-    if (!urlOrPath) return null;
-    if (urlOrPath.startsWith('http://') || urlOrPath.startsWith('https://') || urlOrPath.startsWith('data:')) {
-      return urlOrPath;
+  const handleOpenSelfie = async (rawPathOrUrl: string) => {
+    if (!rawPathOrUrl) return;
+
+    setIsSelfieModalOpen(true);
+    setSelfieError(null);
+    setPreviewSelfieUrl(null);
+
+    // If it's already a base64 data URL (e.g. from local/offline capture)
+    if (rawPathOrUrl.startsWith('data:')) {
+      setPreviewSelfieUrl(rawPathOrUrl);
+      return;
     }
-    if (supabase) {
-      const { data } = supabase.storage.from('selfies-asistencia').getPublicUrl(urlOrPath);
-      return data?.publicUrl || null;
+
+    // Clean path if it includes bucket prefix or URL parts
+    let path = rawPathOrUrl;
+    if (path.includes('/selfies-asistencia/')) {
+      path = path.split('/selfies-asistencia/')[1].split('?')[0];
     }
-    return null;
+
+    // If it's an external URL (not Supabase storage path)
+    if (path.startsWith('http://') || path.startsWith('https://')) {
+      setPreviewSelfieUrl(path);
+      return;
+    }
+
+    // Generate temporary signed URL (300 seconds) from private bucket 'selfies-asistencia'
+    setLoadingSelfie(true);
+    try {
+      if (!supabase) {
+        throw new Error('Supabase client no configurado');
+      }
+
+      const { data, error } = await supabase.storage
+        .from('selfies-asistencia')
+        .createSignedUrl(path, 300);
+
+      if (error || !data?.signedUrl) {
+        throw error || new Error('No se pudo generar la URL firmada');
+      }
+
+      setPreviewSelfieUrl(data.signedUrl);
+    } catch (err) {
+      console.error('Error al generar signed URL de selfie:', err);
+      setSelfieError('No se pudo cargar la selfie de verificación.');
+    } finally {
+      setLoadingSelfie(false);
+    }
   };
 
   const loadDashboardData = useCallback(async () => {
@@ -495,7 +537,6 @@ export const DirectorDashboard: React.FC<DirectorDashboardProps> = ({
 
                 <div className="space-y-3">
                   {pendingExceptions.map((a) => {
-                    const fullSelfie = getSelfieFullUrl(a.selfie_url);
                     const isProcessing = actionProcessingId === a.id;
 
                     return (
@@ -555,10 +596,10 @@ export const DirectorDashboard: React.FC<DirectorDashboardProps> = ({
                             </span>
                           </div>
 
-                          {fullSelfie && (
+                          {a.selfie_url && (
                             <button
                               type="button"
-                              onClick={() => setPreviewSelfieUrl(fullSelfie)}
+                              onClick={() => handleOpenSelfie(a.selfie_url!)}
                               className="px-2.5 py-1 bg-emerald-50 hover:bg-emerald-100 text-[#00A651] border border-emerald-300 rounded-xl font-bold text-xs flex items-center gap-1.5 transition-all"
                             >
                               <Eye className="w-3.5 h-3.5" />
@@ -605,7 +646,6 @@ export const DirectorDashboard: React.FC<DirectorDashboardProps> = ({
                 </div>
               ) : (
                 filteredAsistencias.map((a) => {
-                  const selfieUrl = getSelfieFullUrl(a.selfie_url);
                   return (
                     <div
                       key={a.id}
@@ -627,10 +667,10 @@ export const DirectorDashboard: React.FC<DirectorDashboardProps> = ({
                             >
                               Excepción: {a.estado_excepcion}
                             </span>
-                            {selfieUrl && (
+                            {a.selfie_url && (
                               <button
                                 type="button"
-                                onClick={() => setPreviewSelfieUrl(selfieUrl)}
+                                onClick={() => handleOpenSelfie(a.selfie_url!)}
                                 className="text-slate-500 hover:text-[#00A651] font-bold text-[10px] underline flex items-center gap-0.5"
                               >
                                 <Eye className="w-3 h-3" /> Selfie
@@ -724,9 +764,9 @@ export const DirectorDashboard: React.FC<DirectorDashboardProps> = ({
       )}
 
       {/* Selfie Preview Modal */}
-      {previewSelfieUrl && (
+      {isSelfieModalOpen && (
         <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl p-4 max-w-sm w-full space-y-3 relative shadow-2xl">
+          <div className="bg-white rounded-3xl p-5 max-w-sm w-full space-y-4 relative shadow-2xl border border-slate-100">
             <div className="flex items-center justify-between border-b border-slate-100 pb-2">
               <span className="font-extrabold text-sm text-[#17324D] flex items-center gap-1.5">
                 <Camera className="w-4 h-4 text-[#00A651]" />
@@ -734,23 +774,49 @@ export const DirectorDashboard: React.FC<DirectorDashboardProps> = ({
               </span>
               <button
                 type="button"
-                onClick={() => setPreviewSelfieUrl(null)}
-                className="p-1 text-slate-400 hover:text-slate-600 rounded-full"
+                onClick={() => {
+                  setIsSelfieModalOpen(false);
+                  setPreviewSelfieUrl(null);
+                  setSelfieError(null);
+                }}
+                className="p-1 text-slate-400 hover:text-slate-600 rounded-full transition-colors"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
-            <div className="rounded-2xl overflow-hidden bg-slate-900 border border-slate-200 flex items-center justify-center max-h-80">
-              <img
-                src={previewSelfieUrl}
-                alt="Selfie docente"
-                className="w-full h-auto object-cover max-h-80"
-                referrerPolicy="no-referrer"
-              />
+
+            <div className="rounded-2xl overflow-hidden bg-slate-900 border border-slate-200 flex items-center justify-center min-h-[220px] max-h-80 relative">
+              {loadingSelfie && (
+                <div className="flex flex-col items-center justify-center gap-2 p-6 text-white text-xs">
+                  <Loader2 className="w-7 h-7 text-[#00A651] animate-spin" />
+                  <span className="font-medium">Cargando selfie de verificación...</span>
+                </div>
+              )}
+
+              {!loadingSelfie && selfieError && (
+                <div className="p-4 text-center text-xs font-bold text-red-400">
+                  {selfieError}
+                </div>
+              )}
+
+              {!loadingSelfie && !selfieError && previewSelfieUrl && (
+                <img
+                  src={previewSelfieUrl}
+                  alt="Selfie docente"
+                  className="w-full h-auto object-cover max-h-80"
+                  referrerPolicy="no-referrer"
+                  onError={() => setSelfieError('No se pudo cargar la selfie de verificación.')}
+                />
+              )}
             </div>
+
             <button
               type="button"
-              onClick={() => setPreviewSelfieUrl(null)}
+              onClick={() => {
+                setIsSelfieModalOpen(false);
+                setPreviewSelfieUrl(null);
+                setSelfieError(null);
+              }}
               className="w-full py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-extrabold text-xs rounded-xl transition-all"
             >
               Cerrar
