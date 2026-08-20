@@ -381,7 +381,13 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
         }
 
         const grupoNombre = s.grupos?.nombre || 'Grupo sin nombre';
-        const rawAsistencias = Array.isArray(s.asistencias_estudiantes) ? s.asistencias_estudiantes : [];
+        const rawAsistencias = Array.isArray(s.asistencias_estudiantes)
+          ? s.asistencias_estudiantes
+          : [];
+
+        if (rawAsistencias.length === 0) {
+          return;
+        }
 
         // Deduplicar estudiantes por estudiante_id dentro de la sesión para métricas exactas
         const seenStudents = new Set<string>();
