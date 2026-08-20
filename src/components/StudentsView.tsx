@@ -659,6 +659,91 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
           throw asistenciasError;
         }
 
+        // 4. Generación automática de alertas de seguimiento por faltas consecutivas reales
+        try {
+          const faltasItems = items.filter(item => item.estado === 'falta');
+          if (faltasItems.length > 0) {
+            // Consultar sesiones reales del grupo ordenadas cronológicamente de más reciente a más antigua
+            const { data: groupSessions } = await supabase
+              .from('sesiones_clase')
+              .select(`
+                id,
+                fecha,
+                created_at,
+                asistencias_estudiantes (
+                  estudiante_id,
+                  estado
+                )
+              `)
+              .eq('grupo_id', selectedGrupoId)
+              .order('fecha', { ascending: false })
+              .order('created_at', { ascending: false });
+
+            if (groupSessions && groupSessions.length > 0) {
+              for (const fItem of faltasItems) {
+                const estId = fItem.estudiante_id;
+                let consecutiveFaltas = 0;
+
+                // Contar faltas consecutivas hacia atrás desde la más reciente
+                for (const ses of groupSessions) {
+                  const rawAsistList = Array.isArray(ses.asistencias_estudiantes)
+                    ? ses.asistencias_estudiantes
+                    : [];
+                  const asisRecord = rawAsistList.find((a: any) => a.estudiante_id === estId);
+                  if (asisRecord) {
+                    if (asisRecord.estado === 'falta') {
+                      consecutiveFaltas++;
+                    } else {
+                      // Se interrumpe la racha consecutiva al encontrar presente, atraso o licencia
+                      break;
+                    }
+                  }
+                }
+
+                // Aplicar reglas: 2 faltas -> amarillo, 3 o más -> rojo
+                if (consecutiveFaltas >= 2) {
+                  const targetTipo = consecutiveFaltas >= 3 ? 'rojo_3_faltas' : 'amarillo_2_faltas';
+
+                  // Verificar si ya existe una alerta activa para este estudiante, grupo y docente
+                  const { data: existingAlerts } = await supabase
+                    .from('alertas_estudiantes')
+                    .select('id, tipo, faltas_consecutivas, estado')
+                    .eq('estudiante_id', estId)
+                    .eq('grupo_id', selectedGrupoId)
+                    .eq('docente_id', user.id)
+                    .eq('estado', 'pendiente');
+
+                  if (existingAlerts && existingAlerts.length > 0) {
+                    // Actualizar alerta existente (promueve amarillo -> rojo si llegó a 3 faltas)
+                    await supabase
+                      .from('alertas_estudiantes')
+                      .update({
+                        tipo: targetTipo,
+                        faltas_consecutivas: consecutiveFaltas,
+                        estado: 'pendiente'
+                      })
+                      .eq('id', existingAlerts[0].id);
+                  } else {
+                    // Crear nueva alerta activa
+                    await supabase
+                      .from('alertas_estudiantes')
+                      .insert({
+                        estudiante_id: estId,
+                        grupo_id: selectedGrupoId,
+                        docente_id: user.id,
+                        tipo: targetTipo,
+                        faltas_consecutivas: consecutiveFaltas,
+                        estado: 'pendiente'
+                      });
+                  }
+                }
+              }
+            }
+          }
+        } catch (alertErr) {
+          console.warn('Error al verificar y generar alertas de seguimiento:', alertErr);
+        }
+
         // Éxito en Supabase
         const presentesOatrasos = items.filter(i => i.estado === 'presente' || i.estado === 'atraso').length;
         const totalGroup = Math.max(1, items.length);
