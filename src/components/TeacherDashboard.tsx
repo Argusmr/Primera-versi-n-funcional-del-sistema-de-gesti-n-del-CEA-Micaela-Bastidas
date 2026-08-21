@@ -83,9 +83,7 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
   const [showControlDiarioModal, setShowControlDiarioModal] = useState<boolean>(false);
   const [formFecha, setFormFecha] = useState<string>(new Date().toISOString().slice(0, 10));
   const [formHoraEntrada, setFormHoraEntrada] = useState<string>('18:30');
-  const [formHoraSalida, setFormHoraSalida] = useState<string>('22:00');
   const [firmaEntrada, setFirmaEntrada] = useState<boolean>(true);
-  const [firmaSalida, setFirmaSalida] = useState<boolean>(false);
 
   // Multigrade activity rows state
   const [multigradoRows, setMultigradoRows] = useState<FilaActividadPedagogica[]>([
@@ -145,9 +143,31 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
         setTodayAttendance(foundRec);
         if (foundRec.actividades_multigrado && foundRec.actividades_multigrado.length > 0) {
           setMultigradoRows(foundRec.actividades_multigrado);
+        } else if (foundRec.observacion) {
+          try {
+            const parsed = JSON.parse(foundRec.observacion);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              setMultigradoRows(parsed);
+            }
+          } catch {
+            if (
+              foundRec.observacion.trim() &&
+              !foundRec.observacion.startsWith('Ingreso') &&
+              !foundRec.observacion.startsWith('Salida')
+            ) {
+              setMultigradoRows([
+                {
+                  id: 'row-1',
+                  area_nivel: 'ETA',
+                  subnivel: 'Técnico Básico',
+                  carrera: 'Gastronomía',
+                  actividad_pedagogica: foundRec.observacion
+                }
+              ]);
+            }
+          }
         }
         if (foundRec.firma_ingreso !== undefined) setFirmaEntrada(foundRec.firma_ingreso);
-        if (foundRec.firma_salida !== undefined) setFirmaSalida(foundRec.firma_salida);
       }
     }
     loadInitialData();
@@ -236,7 +256,6 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
             actividades_multigrado: multigradoRows
           };
           setTodayAttendance(updatedRec);
-          setFirmaSalida(true);
           setShowShiftSummaryModal(true);
         }
       } else {
@@ -265,7 +284,6 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
         };
 
         setTodayAttendance(updatedRec);
-        setFirmaSalida(true);
         setShowShiftSummaryModal(true);
         onRefreshSync();
       }
@@ -313,8 +331,10 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
   };
 
   // Save Control Diario Form
-  const handleSaveControlDiario = (e: React.FormEvent) => {
+  const handleSaveControlDiario = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    const obsJson = JSON.stringify(multigradoRows);
 
     const updatedRecord: AsistenciaDocente = {
       id: todayAttendance?.id || `asis-${user.id}-${formFecha}`,
@@ -322,19 +342,39 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
       docente_nombre: user.nombre_completo,
       fecha_laboral: formFecha,
       hora_ingreso_oficial: todayAttendance?.hora_ingreso_oficial || `${formFecha}T${formHoraEntrada}:00-04:00`,
-      hora_salida_oficial: todayAttendance?.hora_salida_oficial || (firmaSalida ? `${formFecha}T${formHoraSalida}:00-04:00` : undefined),
-      firma_ingreso: firmaEntrada,
-      firma_salida: firmaSalida,
+      hora_salida_oficial: todayAttendance?.hora_salida_oficial,
+      firma_ingreso: todayAttendance?.firma_ingreso ?? true,
+      firma_salida: Boolean(todayAttendance?.hora_salida_oficial),
       minutos_atraso: todayAttendance?.minutos_atraso || 0,
-      minutos_salida_anticipada: 0,
+      minutos_salida_anticipada: todayAttendance?.minutos_salida_anticipada || 0,
       horas_trabajadas: todayAttendance?.horas_trabajadas || 3.5,
       estado: todayAttendance?.estado || 'puntual',
       origen_registro: isOnline ? 'en_linea' : 'sin_conexion',
       sync_key: todayAttendance?.sync_key || `sync-${Date.now()}`,
+      observacion: obsJson,
       actividades_multigrado: multigradoRows
     };
 
     setTodayAttendance(updatedRecord);
+
+    if (supabase && isOnline) {
+      try {
+        const { error } = await supabase
+          .from('asistencias_docentes')
+          .update({
+            observacion: obsJson
+          })
+          .eq('docente_id', user.id)
+          .eq('fecha_laboral', formFecha);
+
+        if (error) {
+          console.error('Error al actualizar observación de control diario en Supabase:', error.message);
+        }
+      } catch (err) {
+        console.error('Error al persistir control diario en Supabase:', err);
+      }
+    }
+
     setFormSavedSuccess(true);
     setTimeout(() => {
       setFormSavedSuccess(false);
@@ -854,55 +894,39 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
                   </button>
                 </div>
 
-                {/* Section: Hora y Firma de Salida */}
-                <div className="bg-teal-50/80 p-4 rounded-2xl border border-teal-200 space-y-3">
-                  <h4 className="font-extrabold text-[#17324D] text-sm flex items-center gap-2">
-                    <Clock className="w-4 h-4 text-[#11B8AE]" />
-                    <span>Registro y Salida Oficial</span>
-                  </h4>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-center">
-                    <div>
-                      <label className="block text-xs font-bold text-slate-700 mb-1">Hora de Salida</label>
-                      <input
-                        type="time"
-                        value={formHoraSalida}
-                        onChange={(e) => setFormHoraSalida(e.target.value)}
-                        className="w-full h-11 px-3 bg-white rounded-xl border border-slate-300 font-bold text-slate-800"
-                        required
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-bold text-slate-700 mb-1">Firma de Salida</label>
-                      <button
-                        type="button"
-                        onClick={() => setFirmaSalida(!firmaSalida)}
-                        className={`w-full h-11 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all ${
-                          firmaSalida
-                            ? 'bg-teal-700 text-white shadow-xs'
-                            : 'bg-white border-2 border-slate-300 text-slate-600'
-                        }`}
-                      >
-                        {firmaSalida ? (
-                          <>
-                            <Check className="w-4 h-4 text-teal-200" />
-                            <span>✓ Firma de Salida Validada</span>
-                          </>
-                        ) : (
-                          <>
-                            <PenTool className="w-4 h-4 text-slate-400" />
-                            <span>Hacer Clic para Firmar Salida</span>
-                          </>
-                        )}
-                      </button>
-                    </div>
+                {/* Section: Estado de Salida Oficial */}
+                <div className="bg-teal-50/80 p-4 rounded-2xl border border-teal-200 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <h4 className="font-extrabold text-[#17324D] text-sm flex items-center gap-2">
+                      <Clock className="w-4 h-4 text-[#11B8AE]" />
+                      <span>Salida Oficial de la Jornada</span>
+                    </h4>
+                    {todayAttendance?.hora_salida_oficial ? (
+                      <span className="px-2.5 py-1 bg-emerald-100 text-emerald-800 font-bold text-xs rounded-xl flex items-center gap-1">
+                        <Check className="w-3.5 h-3.5" /> Registrada (
+                        {new Date(todayAttendance.hora_salida_oficial).toLocaleTimeString('es-BO', {
+                          hour: '2-digit',
+                          minute: '2-digit'
+                        })}
+                        )
+                      </span>
+                    ) : (
+                      <span className="px-2.5 py-1 bg-amber-100 text-amber-800 font-bold text-xs rounded-xl flex items-center gap-1">
+                        <Clock className="w-3.5 h-3.5" /> Pendiente
+                      </span>
+                    )}
                   </div>
+
+                  <p className="text-xs text-slate-600 font-medium">
+                    {todayAttendance?.hora_salida_oficial
+                      ? 'Tu salida oficial ya fue verificada y registrada correctamente con GPS.'
+                      : 'La salida oficial se realiza únicamente mediante el botón "MARCAR SALIDA" con verificación GPS en la pantalla principal al concluir tu turno.'}
+                  </p>
                 </div>
 
                 {/* Verification note */}
                 <p className="text-[11px] text-slate-500 font-medium bg-slate-100 p-3 rounded-xl text-center border border-slate-200">
-                  <strong className="text-slate-700">Nota de Validación:</strong> La firma de entrada y la firma de salida constituyen la validación oficial de este registro diario.
+                  <strong className="text-slate-700">Nota Institucional:</strong> Este formulario registra el avance pedagógico del día. El control horario de entrada y salida se valida mediante GPS y selfie en el panel docente.
                 </p>
 
                 {/* Action Buttons */}
