@@ -234,9 +234,9 @@ export const ClockInVerificationModal: React.FC<ClockInVerificationModalProps> =
           p_distancia: distanceMeters || null,
           p_estado_gps: estadoGps,
           p_selfie_url: selfiePath || null,
-          p_observacion_excepcion: needsException ? observacionExcepcion : null,
+          p_observacion_excepcion: needsException ? observacionExcepcion.trim() : null,
           p_estado_excepcion: estadoExcepcion,
-          p_observacion: needsException ? `Excepción registrada: ${observacionExcepcion}` : 'Ingreso verificado por GPS y Selfie'
+          p_observacion: null
         });
 
         if (rpcErr) {
@@ -246,7 +246,7 @@ export const ClockInVerificationModal: React.FC<ClockInVerificationModalProps> =
             p_sync_key: syncKey,
             p_hora_local: localIso,
             p_es_offline: false,
-            p_observacion: needsException ? `Excepción GPS: ${observacionExcepcion}` : 'Ingreso registrado en línea'
+            p_observacion: null
           });
 
           if (fallback.error) {
@@ -276,7 +276,7 @@ export const ClockInVerificationModal: React.FC<ClockInVerificationModalProps> =
           distancia_m_ingreso: distanceMeters || undefined,
           estado_gps_ingreso: estadoGps,
           selfie_url: selfiePreviewUrl || selfiePath,
-          observacion_excepcion: observacionExcepcion,
+          observacion_excepcion: needsException ? observacionExcepcion.trim() : undefined,
           estado_excepcion: estadoExcepcion
         };
 
@@ -299,9 +299,9 @@ export const ClockInVerificationModal: React.FC<ClockInVerificationModalProps> =
             distancia_m: distanceMeters || undefined,
             estado_gps: estadoGps,
             selfie_base64: base64data,
-            observacion_excepcion: observacionExcepcion,
+            observacion_excepcion: needsException ? observacionExcepcion.trim() : undefined,
             estado_excepcion: estadoExcepcion,
-            observacion: 'Registrado sin conexión con GPS y Selfie',
+            observacion: undefined,
             timestamp: Date.now()
           });
 
@@ -327,9 +327,8 @@ export const ClockInVerificationModal: React.FC<ClockInVerificationModalProps> =
             distancia_m_ingreso: distanceMeters || undefined,
             estado_gps_ingreso: estadoGps,
             selfie_url: selfiePreviewUrl || undefined,
-            observacion_excepcion: observacionExcepcion,
-            estado_excepcion: estadoExcepcion,
-            observacion: 'Registrado sin conexión. Pendiente de sincronización.'
+            observacion_excepcion: needsException ? observacionExcepcion.trim() : undefined,
+            estado_excepcion: estadoExcepcion
           };
 
           onSuccess(offlineRecord);

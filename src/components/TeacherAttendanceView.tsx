@@ -73,14 +73,29 @@ export const TeacherAttendanceView: React.FC<TeacherAttendanceViewProps> = ({ us
         throw new Error(error.message);
       }
 
-      const mapped: AsistenciaDocente[] = (data || []).map((a: any) => ({
-        ...a,
-        docente_nombre: a.docente_nombre || user.nombre_completo,
-        sede_nombre: a.sede_nombre || user.sede_nombre || 'Sede General',
-        horas_trabajadas: Number(a.horas_trabajadas || 0),
-        minutos_atraso: Number(a.minutos_atraso || 0),
-        minutos_salida_anticipada: Number(a.minutos_salida_anticipada || 0)
-      }));
+      const mapped: AsistenciaDocente[] = (data || []).map((a: any) => {
+        let actividades = a.actividades_multigrado;
+        if ((!actividades || actividades.length === 0) && a.observacion) {
+          try {
+            const parsed = JSON.parse(a.observacion);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              actividades = parsed;
+            }
+          } catch {
+            // plain text observation
+          }
+        }
+
+        return {
+          ...a,
+          actividades_multigrado: actividades,
+          docente_nombre: a.docente_nombre || user.nombre_completo,
+          sede_nombre: a.sede_nombre || user.sede_nombre || 'Sede General',
+          horas_trabajadas: Number(a.horas_trabajadas || 0),
+          minutos_atraso: Number(a.minutos_atraso || 0),
+          minutos_salida_anticipada: Number(a.minutos_salida_anticipada || 0)
+        };
+      });
 
       setRecordsState(mapped);
     } catch (err: any) {
@@ -404,7 +419,10 @@ export const TeacherAttendanceView: React.FC<TeacherAttendanceViewProps> = ({ us
                   </div>
                 )}
 
-                {r.observacion && (
+                {r.observacion &&
+                  !r.observacion.trim().startsWith('[') &&
+                  !r.observacion.trim().startsWith('{') &&
+                  r.observacion !== r.observacion_excepcion && (
                   <p className="text-[11px] text-slate-500 bg-white p-2 rounded-xl border border-slate-200">
                     {r.observacion}
                   </p>

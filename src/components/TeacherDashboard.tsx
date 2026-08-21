@@ -150,18 +150,22 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
               setMultigradoRows(parsed);
             }
           } catch {
-            if (
-              foundRec.observacion.trim() &&
-              !foundRec.observacion.startsWith('Ingreso') &&
-              !foundRec.observacion.startsWith('Salida')
-            ) {
+            // Ignorar textos de excepciones, ingresos, salidas o mensajes del sistema
+            const obs = foundRec.observacion.trim();
+            const esTextoDeSistemaOExcepcion =
+              obs.startsWith('Excepción') ||
+              obs.startsWith('Ingreso') ||
+              obs.startsWith('Salida') ||
+              obs.startsWith('Registrado') ||
+              obs === (foundRec.observacion_excepcion || '').trim();
+
+            if (obs && !esTextoDeSistemaOExcepcion) {
               setMultigradoRows([
                 {
                   id: 'row-1',
-                  area_nivel: 'ETA',
-                  subnivel: 'Técnico Básico',
-                  carrera: 'Gastronomía',
-                  actividad_pedagogica: foundRec.observacion
+                  area_nivel: 'EPA',
+                  subnivel: 'Aprendizajes Básicos',
+                  actividad_pedagogica: obs
                 }
               ]);
             }
@@ -229,7 +233,7 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
           p_latitud: gpsLocation.latitud || null,
           p_longitud: gpsLocation.longitud || null,
           p_precision: gpsLocation.precision || null,
-          p_observacion: 'Salida registrada con verificación GPS'
+          p_observacion: todayAttendance?.observacion || null
         });
 
         if (error && error.message?.includes('function')) {
@@ -238,7 +242,7 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
             p_sync_key: syncKey,
             p_hora_local: localIso,
             p_es_offline: false,
-            p_observacion: 'Salida registrada en línea'
+            p_observacion: todayAttendance?.observacion || null
           });
           data = fallback.data;
           error = fallback.error;
@@ -268,7 +272,7 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
           latitud: gpsLocation.latitud,
           longitud: gpsLocation.longitud,
           precision_gps: gpsLocation.precision,
-          observacion: 'Salida registrada sin conexión',
+          observacion: todayAttendance?.observacion || undefined,
           timestamp: Date.now()
         });
 

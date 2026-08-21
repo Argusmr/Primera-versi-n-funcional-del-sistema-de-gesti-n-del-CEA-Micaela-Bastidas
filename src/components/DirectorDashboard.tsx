@@ -571,7 +571,7 @@ export const DirectorDashboard: React.FC<DirectorDashboardProps> = ({
                             Motivo / Observación del Docente:
                           </span>
                           <p className="text-xs text-slate-800 font-medium italic">
-                            "{a.observacion_excepcion || a.observacion || 'Sin motivo detallado'}"
+                            "{a.observacion_excepcion || (!a.observacion?.trim().startsWith('[') && !a.observacion?.trim().startsWith('{') ? a.observacion : null) || 'Sin motivo detallado'}"
                           </p>
                         </div>
 

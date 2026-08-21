@@ -84,7 +84,7 @@ export async function processSyncQueue(): Promise<{ success: boolean; syncedCoun
             p_selfie_url: selfiePath || null,
             p_observacion_excepcion: item.observacion_excepcion || null,
             p_estado_excepcion: item.estado_excepcion || 'ninguna',
-            p_observacion: item.observacion || 'Registrado offline y sincronizado'
+            p_observacion: item.observacion || null
           };
 
           let { error } = await supabase.rpc('registrar_ingreso_gps', rpcParams);
@@ -95,7 +95,7 @@ export async function processSyncQueue(): Promise<{ success: boolean; syncedCoun
               p_sync_key: item.sync_key,
               p_hora_local: item.hora_local,
               p_es_offline: true,
-              p_observacion: item.observacion || 'Registrado offline y sincronizado'
+              p_observacion: item.observacion || null
             });
             error = fallback.error;
           }
@@ -113,7 +113,7 @@ export async function processSyncQueue(): Promise<{ success: boolean; syncedCoun
             p_latitud: item.latitud || null,
             p_longitud: item.longitud || null,
             p_precision: item.precision_gps || null,
-            p_observacion: item.observacion || 'Registrado offline y sincronizado'
+            p_observacion: item.observacion || null
           });
 
           if (error && error.message?.includes('function')) {
@@ -122,7 +122,7 @@ export async function processSyncQueue(): Promise<{ success: boolean; syncedCoun
               p_sync_key: item.sync_key,
               p_hora_local: item.hora_local,
               p_es_offline: true,
-              p_observacion: item.observacion || 'Registrado offline y sincronizado'
+              p_observacion: item.observacion || null
             });
             error = fallback.error;
           }
