@@ -705,7 +705,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
                   const targetTipo = consecutiveFaltas >= 3 ? 'rojo_3_faltas' : 'amarillo_2_faltas';
 
                   // Verificar si ya existe una alerta activa para este estudiante, grupo y docente
-                  const { data: existingAlerts } = await supabase
+                  const { data: existingAlerts, error: checkAlertError } = await supabase
                     .from('alertas_estudiantes')
                     .select('id, tipo, faltas_consecutivas, estado')
                     .eq('estudiante_id', estId)
@@ -713,9 +713,14 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
                     .eq('docente_id', user.id)
                     .eq('estado', 'pendiente');
 
+                  if (checkAlertError) {
+                    console.error('Error al consultar alertas existentes en Supabase:', checkAlertError.message, checkAlertError);
+                    continue;
+                  }
+
                   if (existingAlerts && existingAlerts.length > 0) {
                     // Actualizar alerta existente (promueve amarillo -> rojo si llegó a 3 faltas)
-                    await supabase
+                    const { error: updateAlertError } = await supabase
                       .from('alertas_estudiantes')
                       .update({
                         tipo: targetTipo,
@@ -723,9 +728,13 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
                         estado: 'pendiente'
                       })
                       .eq('id', existingAlerts[0].id);
+
+                    if (updateAlertError) {
+                      console.error('Error al actualizar alerta en public.alertas_estudiantes:', updateAlertError.message, updateAlertError);
+                    }
                   } else {
                     // Crear nueva alerta activa
-                    await supabase
+                    const { error: insertAlertError } = await supabase
                       .from('alertas_estudiantes')
                       .insert({
                         estudiante_id: estId,
@@ -735,6 +744,10 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
                         faltas_consecutivas: consecutiveFaltas,
                         estado: 'pendiente'
                       });
+
+                    if (insertAlertError) {
+                      console.error('Error al insertar alerta en public.alertas_estudiantes:', insertAlertError.message, insertAlertError);
+                    }
                   }
                 }
               }

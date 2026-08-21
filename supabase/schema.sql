@@ -592,6 +592,40 @@ CREATE POLICY "Docente gestiona asistencia de sus grupos" ON public.asistencias_
     )
   );
 
+-- Politicas: Alertas Estudiantiles
+CREATE POLICY "Superadmin gestiona alertas estudiantes" ON public.alertas_estudiantes
+  FOR ALL USING (
+    public.es_superadmin()
+  )
+  WITH CHECK (
+    public.es_superadmin()
+  );
+
+CREATE POLICY "Docente gestiona sus propias alertas" ON public.alertas_estudiantes
+  FOR ALL USING (
+    docente_id = auth.uid()
+  )
+  WITH CHECK (
+    docente_id = auth.uid()
+  );
+
+-- Politicas: Seguimientos Estudiantiles
+CREATE POLICY "Superadmin gestiona seguimientos" ON public.seguimientos
+  FOR ALL USING (
+    public.es_superadmin()
+  )
+  WITH CHECK (
+    public.es_superadmin()
+  );
+
+CREATE POLICY "Docente gestiona sus propios seguimientos" ON public.seguimientos
+  FOR ALL USING (
+    docente_id = auth.uid()
+  )
+  WITH CHECK (
+    docente_id = auth.uid()
+  );
+
 -- Politicas: Publicaciones y Documentos
 CREATE POLICY "Lectura publica autenticada publicaciones" ON public.publicaciones
   FOR SELECT USING (auth.uid() IS NOT NULL);
