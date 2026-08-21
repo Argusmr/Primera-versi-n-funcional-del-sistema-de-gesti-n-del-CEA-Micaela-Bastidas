@@ -149,12 +149,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
       if (list.length > 0) {
         setSelectedGrupoId(prev => {
           const exists = list.some(g => g.id === prev);
-          const nextId = exists ? prev : list[0].id;
-          const currentG = list.find(g => g.id === nextId);
-          if (currentG) {
-            setMateriaClase(currentG.materia);
-          }
-          return nextId;
+          return exists ? prev : list[0].id;
         });
       } else {
         setSelectedGrupoId('');
@@ -170,7 +165,11 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
   };
 
   // 2. Cargar estudiantes reales del grupo seleccionado
-  const fetchStudentsForGroup = async (grupoId: string, customFecha?: string, customMateria?: string) => {
+  const fetchStudentsForGroup = async (
+    grupoId: string,
+    customFecha?: string,
+    fallbackList?: Array<{ id: string; nombre: string; materia: string }>
+  ) => {
     if (!grupoId) {
       setAsistenciaStudents([]);
       return;
@@ -230,26 +229,42 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
         initialMap[st.id] = 'presente';
       });
 
-      // Si existe una sesión previa guardada para esta fecha y materia, precargar estados reales
-      const targetFecha = customFecha || fechaClase;
-      const targetMateria = (customMateria !== undefined ? customMateria : materiaClase).trim();
+      // Determinar materia de respaldo desde las asignaciones del docente
+      const groupsSource = fallbackList && fallbackList.length > 0 ? fallbackList : assignedGroups;
+      const currentGroup = groupsSource.find(g => g.id === grupoId);
+      const defaultMateria = currentGroup?.materia || 'Docencia General';
 
-      if (targetFecha && targetMateria) {
+      // Si existe una sesión previa guardada para esta fecha en el grupo, precargar estados reales y materia
+      const targetFecha = customFecha || fechaClase;
+
+      if (targetFecha) {
         const { data: sesionData } = await supabase
           .from('sesiones_clase')
-          .select('id, asistencias_estudiantes(estudiante_id, estado)')
+          .select('id, materia, asistencias_estudiantes(estudiante_id, estado)')
           .eq('grupo_id', grupoId)
           .eq('fecha', targetFecha)
-          .eq('materia', targetMateria)
+          .order('created_at', { ascending: false })
+          .limit(1)
           .maybeSingle();
 
-        if (sesionData && Array.isArray((sesionData as any).asistencias_estudiantes)) {
-          (sesionData as any).asistencias_estudiantes.forEach((a: any) => {
-            if (a.estudiante_id && a.estado) {
-              initialMap[a.estudiante_id] = a.estado;
-            }
-          });
+        if (sesionData) {
+          // Si existe: cargar la materia guardada en sesiones_clase.materia
+          if (sesionData.materia) {
+            setMateriaClase(sesionData.materia);
+          }
+          if (Array.isArray((sesionData as any).asistencias_estudiantes)) {
+            (sesionData as any).asistencias_estudiantes.forEach((a: any) => {
+              if (a.estudiante_id && a.estado) {
+                initialMap[a.estudiante_id] = a.estado;
+              }
+            });
+          }
+        } else {
+          // Si no existe: usar la materia de asignaciones_docentes como valor inicial
+          setMateriaClase(defaultMateria);
         }
+      } else {
+        setMateriaClase(defaultMateria);
       }
 
       setAttendanceMap(initialMap);
@@ -487,12 +502,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
   useEffect(() => {
     if (selectedGrupoId) {
       setAttendanceSaved(false);
-      const currentG = assignedGroups.find(g => g.id === selectedGrupoId);
-      const mat = currentG ? currentG.materia : materiaClase;
-      if (currentG) {
-        setMateriaClase(currentG.materia);
-      }
-      fetchStudentsForGroup(selectedGrupoId, fechaClase, mat);
+      fetchStudentsForGroup(selectedGrupoId, fechaClase);
     } else {
       setAsistenciaStudents([]);
     }
@@ -502,7 +512,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
   useEffect(() => {
     if (selectedGrupoId && activeSubTab === 'asistencia') {
       setAttendanceSaved(false);
-      fetchStudentsForGroup(selectedGrupoId, fechaClase, materiaClase);
+      fetchStudentsForGroup(selectedGrupoId, fechaClase);
     }
   }, [fechaClase]);
 
@@ -511,7 +521,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
       if (activeSubTab === 'nomina') {
         fetchNomina();
       } else if (activeSubTab === 'asistencia' && selectedGrupoId) {
-        fetchStudentsForGroup(selectedGrupoId, fechaClase, materiaClase);
+        fetchStudentsForGroup(selectedGrupoId, fechaClase);
       } else if (activeSubTab === 'historial') {
         fetchHistorialSesiones();
       }
@@ -522,7 +532,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
       window.removeEventListener('estudiante-added', handleRefresh);
       window.removeEventListener('asistencia-estudiantes-guardada', handleRefresh);
     };
-  }, [activeSubTab, selectedGrupoId, fechaClase, materiaClase]);
+  }, [activeSubTab, selectedGrupoId, fechaClase]);
 
   // Nomina tab filtered real students
   const filteredNominaStudents = nominaStudents.filter((e) => {
@@ -937,10 +947,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
                     <select
                       value={selectedGrupoId}
                       onChange={e => {
-                        const newId = e.target.value;
-                        setSelectedGrupoId(newId);
-                        const match = assignedGroups.find(g => g.id === newId);
-                        if (match) setMateriaClase(match.materia);
+                        setSelectedGrupoId(e.target.value);
                       }}
                       className="w-full h-11 px-3 bg-slate-50 border border-slate-300 rounded-xl outline-none font-medium"
                     >
