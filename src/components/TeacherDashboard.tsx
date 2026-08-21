@@ -80,8 +80,9 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
   const [showClockInVerificationModal, setShowClockInVerificationModal] = useState<boolean>(false);
 
   // Form modal state for Control Diario
+  const todayStr = getBoliviaTodayDate();
   const [showControlDiarioModal, setShowControlDiarioModal] = useState<boolean>(false);
-  const [formFecha, setFormFecha] = useState<string>(new Date().toISOString().slice(0, 10));
+  const [formFecha, setFormFecha] = useState<string>(todayStr);
   const [formHoraEntrada, setFormHoraEntrada] = useState<string>('18:30');
   const [firmaEntrada, setFirmaEntrada] = useState<boolean>(true);
 
@@ -101,7 +102,6 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
   const [asistenciaPorcentaje] = useState<number>(95.8);
   const [puntualidadPorcentaje] = useState<number>(91.5);
 
-  const todayStr = getBoliviaTodayDate();
   const currentDateFormatted = new Date().toLocaleDateString('es-BO', {
     timeZone: 'America/La_Paz',
     weekday: 'long',
@@ -120,14 +120,16 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
       // 2. Attendance
       let foundRec: AsistenciaDocente | null = null;
       if (supabase && isOnline) {
-        const { data } = await supabase
+        const { data, error } = await supabase
           .from('asistencias_docentes')
           .select('*')
           .eq('docente_id', user.id)
           .eq('fecha_laboral', todayStr)
-          .single();
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
 
-        if (data) {
+        if (data && !error) {
           foundRec = data as AsistenciaDocente;
         }
       } else {
@@ -141,6 +143,23 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
 
       if (foundRec) {
         setTodayAttendance(foundRec);
+        if (foundRec.fecha_laboral) {
+          setFormFecha(foundRec.fecha_laboral);
+        }
+        if (foundRec.hora_ingreso_oficial) {
+          try {
+            const timePart = new Date(foundRec.hora_ingreso_oficial).toLocaleTimeString('es-BO', {
+              hour: '2-digit',
+              minute: '2-digit',
+              hour12: false
+            });
+            if (timePart && timePart.length === 5) {
+              setFormHoraEntrada(timePart);
+            }
+          } catch {
+            // keep default
+          }
+        }
         if (foundRec.actividades_multigrado && foundRec.actividades_multigrado.length > 0) {
           setMultigradoRows(foundRec.actividades_multigrado);
         } else if (foundRec.observacion) {
@@ -363,13 +382,19 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
 
     if (supabase && isOnline) {
       try {
-        const { error } = await supabase
+        let query = supabase
           .from('asistencias_docentes')
           .update({
             observacion: obsJson
-          })
-          .eq('docente_id', user.id)
-          .eq('fecha_laboral', formFecha);
+          });
+
+        if (todayAttendance?.id && !todayAttendance.id.startsWith('asis-')) {
+          query = query.eq('id', todayAttendance.id);
+        } else {
+          query = query.eq('docente_id', user.id).eq('fecha_laboral', formFecha);
+        }
+
+        const { error } = await query;
 
         if (error) {
           console.error('Error al actualizar observación de control diario en Supabase:', error.message);
