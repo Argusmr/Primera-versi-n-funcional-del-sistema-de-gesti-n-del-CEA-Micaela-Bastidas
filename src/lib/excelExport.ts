@@ -1,6 +1,7 @@
 import * as XLSX from 'xlsx';
-import { AsistenciaDocente, Estudiante, AlertaEstudiante, Seguimiento, Perfil, ResumenAsistenciaDocenteMensual } from '../types';
+import { AsistenciaDocente, Estudiante, AlertaEstudiante, Seguimiento, Perfil, ResumenAsistenciaDocenteMensual, DatosInstitucionales } from '../types';
 import { getBoliviaTodayDate } from './geo';
+import { getLocalDatosInstitucionales } from './institutional';
 
 export function downloadDocenteAttendanceReport(
   records: AsistenciaDocente[],
@@ -264,4 +265,270 @@ export function downloadAtRiskReport(alertas: AlertaEstudiante[], seguimientos: 
 
   const fechaHoy = getBoliviaTodayDate();
   XLSX.writeFile(wb, `Reporte_Estudiantes_En_Riesgo_${fechaHoy}.xlsx`);
+}
+
+export interface MonthlyAttendanceExportData {
+  institucion?: DatosInstitucionales;
+  grupoNombre: string;
+  carreraEspecialidad?: string;
+  nivel?: string;
+  materia?: string;
+  docenteNombre: string;
+  mesAno: string; // e.g. 2026-08
+  estudiantes: Estudiante[];
+  sesiones: Array<{ id: string; fecha: string; materia: string }>;
+  asistenciasPorSesionYEstudiante: Record<string, Record<string, 'presente' | 'atraso' | 'falta' | 'licencia'>>; // sesionId -> estudianteId -> estado
+}
+
+export function downloadMonthlyAttendanceSheetExcel(data: MonthlyAttendanceExportData) {
+  const institucion = data.institucion || getLocalDatosInstitucionales();
+  const wb = XLSX.utils.book_new();
+
+  // Sort students by name
+  const sortedEstudiantes = [...data.estudiantes].sort((a, b) =>
+    a.nombre_completo.localeCompare(b.nombre_completo)
+  );
+
+  // Sort sessions by date
+  const sortedSesiones = [...data.sesiones].sort((a, b) => a.fecha.localeCompare(b.fecha));
+
+  // Determine month title
+  let mesTexto = data.mesAno;
+  try {
+    const [y, m] = data.mesAno.split('-');
+    const d = new Date(Number(y), Number(m) - 1, 1);
+    mesTexto = d.toLocaleDateString('es-BO', { month: 'long', year: 'numeric' }).toUpperCase();
+  } catch {
+    mesTexto = data.mesAno;
+  }
+
+  // Build rows array for Sheet
+  const rows: any[][] = [];
+
+  // 1. Institutional Header
+  rows.push([institucion.nombre_completo.toUpperCase()]);
+  rows.push(['PLANILLA OFICIAL DE ASISTENCIA MENSUAL']);
+  rows.push([`MES / GESTIÓN: ${mesTexto}`, '', `CURSO / GRUPO: ${data.grupoNombre}`]);
+  rows.push([
+    `CARRERA / ESPECIALIDAD: ${data.carreraEspecialidad || 'General'}`,
+    '',
+    `NIVEL: ${data.nivel || 'General'}`
+  ]);
+  rows.push([
+    `MATERIA / MÓDULO: ${data.materia || 'General'}`,
+    '',
+    `DOCENTE / FACILITADOR: ${data.docenteNombre}`
+  ]);
+  rows.push([]); // blank line
+
+  // 2. Table Column Headers
+  const headerRow = ['N°', 'CÓDIGO', 'NOMBRES Y APELLIDOS'];
+  
+  if (sortedSesiones.length > 0) {
+    sortedSesiones.forEach(s => {
+      const dayNum = s.fecha.slice(8, 10);
+      headerRow.push(`Día ${dayNum}`);
+    });
+  } else {
+    // If no registered sessions yet in that month, put generic day columns or notice
+    headerRow.push('Sin sesiones');
+  }
+
+  headerRow.push('TOTAL P', 'TOTAL A', 'TOTAL F', 'TOTAL L', 'TOTAL SESIONES', '% ASIST.');
+  rows.push(headerRow);
+
+  // 3. Student Data Rows
+  let totalPresGroup = 0;
+  let totalAtrGroup = 0;
+  let totalFaltGroup = 0;
+  let totalLicGroup = 0;
+  let totalSesionesCount = sortedSesiones.length;
+
+  sortedEstudiantes.forEach((st, idx) => {
+    let pCount = 0;
+    let aCount = 0;
+    let fCount = 0;
+    let lCount = 0;
+
+    const row: any[] = [
+      idx + 1,
+      st.codigo_interno || `EST-${idx + 1}`,
+      st.nombre_completo
+    ];
+
+    if (sortedSesiones.length > 0) {
+      sortedSesiones.forEach(s => {
+        const estado = data.asistenciasPorSesionYEstudiante[s.id]?.[st.id];
+        if (estado === 'presente') {
+          row.push('P');
+          pCount++;
+        } else if (estado === 'atraso') {
+          row.push('A');
+          aCount++;
+        } else if (estado === 'falta') {
+          row.push('F');
+          fCount++;
+        } else if (estado === 'licencia') {
+          row.push('L');
+          lCount++;
+        } else {
+          row.push('-');
+        }
+      });
+    } else {
+      row.push('-');
+    }
+
+    const totalValid = pCount + aCount + fCount + lCount;
+    const asistidos = pCount + aCount;
+    const pct = totalValid > 0 ? `${Math.round((asistidos / totalValid) * 100)}%` : '0%';
+
+    totalPresGroup += pCount;
+    totalAtrGroup += aCount;
+    totalFaltGroup += fCount;
+    totalLicGroup += lCount;
+
+    row.push(pCount, aCount, fCount, lCount, totalValid, pct);
+    rows.push(row);
+  });
+
+  // 4. Totales por Día / Sesión
+  rows.push([]);
+  const totalesDiasRow = ['', '', 'TOTAL ASISTENCIAS POR SESIÓN (P+A)'];
+  if (sortedSesiones.length > 0) {
+    sortedSesiones.forEach(s => {
+      let dayPresentes = 0;
+      sortedEstudiantes.forEach(st => {
+        const est = data.asistenciasPorSesionYEstudiante[s.id]?.[st.id];
+        if (est === 'presente' || est === 'atraso') {
+          dayPresentes++;
+        }
+      });
+      totalesDiasRow.push(dayPresentes as any);
+    });
+  } else {
+    totalesDiasRow.push('');
+  }
+  totalesDiasRow.push(totalPresGroup as any, totalAtrGroup as any, totalFaltGroup as any, totalLicGroup as any, '', '');
+  rows.push(totalesDiasRow);
+
+  // 5. Signature Footer
+  rows.push([]);
+  rows.push([]);
+  rows.push(['', '_______________________________', '', '', '', '_______________________________']);
+  rows.push(['', `DOCENTE: ${data.docenteNombre}`, '', '', '', `DIRECCIÓN: ${institucion.nombre_director}`]);
+  rows.push(['', 'Firma y Sello del Facilitador', '', '', '', `${institucion.cargo_director} - Sello CEA`]);
+
+  // Convert array of rows to sheet
+  const ws = XLSX.utils.aoa_to_sheet(rows);
+
+  // Column width configuration
+  const colWidths = [
+    { wch: 5 },  // N°
+    { wch: 14 }, // Código
+    { wch: 32 }, // Nombre
+  ];
+  if (sortedSesiones.length > 0) {
+    sortedSesiones.forEach(() => colWidths.push({ wch: 8 }));
+  } else {
+    colWidths.push({ wch: 14 });
+  }
+  colWidths.push({ wch: 9 }, { wch: 9 }, { wch: 9 }, { wch: 9 }, { wch: 14 }, { wch: 10 });
+  ws['!cols'] = colWidths;
+
+  XLSX.utils.book_append_sheet(wb, ws, 'Planilla Mensual');
+
+  const cleanGrupo = data.grupoNombre.replace(/[^a-zA-Z0-9_-]/g, '_');
+  XLSX.writeFile(wb, `Planilla_Mensual_${cleanGrupo}_${data.mesAno}.xlsx`);
+}
+
+export interface DailyAttendanceExportData {
+  institucion?: DatosInstitucionales;
+  grupoNombre: string;
+  carreraEspecialidad?: string;
+  nivel?: string;
+  materia?: string;
+  docenteNombre: string;
+  fecha: string; // e.g. 2026-08-22
+  estudiantes: Array<{
+    id: string;
+    codigo_interno: string;
+    nombre_completo: string;
+    estado: 'presente' | 'atraso' | 'falta' | 'licencia' | string;
+    observacion?: string;
+  }>;
+}
+
+export function downloadDailyAttendanceReportExcel(data: DailyAttendanceExportData) {
+  const institucion = data.institucion || getLocalDatosInstitucionales();
+  const wb = XLSX.utils.book_new();
+
+  const sorted = [...data.estudiantes].sort((a, b) =>
+    a.nombre_completo.localeCompare(b.nombre_completo)
+  );
+
+  const total = sorted.length;
+  const presentes = sorted.filter(e => e.estado === 'presente').length;
+  const atrasos = sorted.filter(e => e.estado === 'atraso').length;
+  const faltas = sorted.filter(e => e.estado === 'falta').length;
+  const licencias = sorted.filter(e => e.estado === 'licencia').length;
+  const pctAsistencia = total > 0 ? Math.round(((presentes + atrasos) / total) * 100) : 0;
+
+  const rows: any[][] = [];
+
+  // Institutional Header
+  rows.push([institucion.nombre_completo.toUpperCase()]);
+  rows.push(['REPORTE DIARIO DE ASISTENCIA ESTUDIANTIL']);
+  rows.push([`FECHA: ${data.fecha}`, '', `GRUPO / CURSO: ${data.grupoNombre}`]);
+  rows.push([`CARRERA: ${data.carreraEspecialidad || 'General'}`, '', `NIVEL: ${data.nivel || 'General'}`]);
+  rows.push([`MATERIA: ${data.materia || 'General'}`, '', `DOCENTE: ${data.docenteNombre}`]);
+  rows.push([]);
+
+  // Summary KPIs
+  rows.push(['RESUMEN DE ASISTENCIA DEL DÍA:']);
+  rows.push([
+    `Total Estudiantes: ${total}`,
+    `Presentes: ${presentes}`,
+    `Atrasos: ${atrasos}`,
+    `Faltas: ${faltas}`,
+    `Licencias: ${licencias}`,
+    `% Asistencia: ${pctAsistencia}%`
+  ]);
+  rows.push([]);
+
+  // Table Column Headers
+  rows.push(['N°', 'CÓDIGO', 'NOMBRE COMPLETO DEL ESTUDIANTE', 'ESTADO DE ASISTENCIA', 'OBSERVACIÓN']);
+
+  sorted.forEach((st, idx) => {
+    let estadoLabel = (st.estado || 'PRESENTE').toUpperCase();
+    rows.push([
+      idx + 1,
+      st.codigo_interno || `EST-${idx + 1}`,
+      st.nombre_completo,
+      estadoLabel,
+      st.observacion || ''
+    ]);
+  });
+
+  // Footer Signatures
+  rows.push([]);
+  rows.push([]);
+  rows.push(['', '_______________________________', '', '_______________________________']);
+  rows.push(['', `DOCENTE: ${data.docenteNombre}`, '', `DIRECCIÓN: ${institucion.nombre_director}`]);
+  rows.push(['', 'Firma Facilitador Responsable', '', `${institucion.cargo_director}`]);
+
+  const ws = XLSX.utils.aoa_to_sheet(rows);
+
+  ws['!cols'] = [
+    { wch: 5 },
+    { wch: 14 },
+    { wch: 36 },
+    { wch: 22 },
+    { wch: 28 }
+  ];
+
+  XLSX.utils.book_append_sheet(wb, ws, 'Reporte Diario');
+
+  const cleanGrupo = data.grupoNombre.replace(/[^a-zA-Z0-9_-]/g, '_');
+  XLSX.writeFile(wb, `Reporte_Diario_${cleanGrupo}_${data.fecha}.xlsx`);
 }

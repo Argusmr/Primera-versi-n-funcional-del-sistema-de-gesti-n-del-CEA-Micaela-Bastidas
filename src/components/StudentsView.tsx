@@ -20,13 +20,15 @@ import {
   Shield,
   ShieldAlert,
   ShieldCheck,
-  FileSignature
+  FileSignature,
+  Printer
 } from 'lucide-react';
 import { Perfil, Estudiante, Grupo, AsistenciaEstudiante } from '../types';
 import { saveOfflineEstudianteAsistencia } from '../lib/db';
 import { downloadStudentEnrollmentReport } from '../lib/excelExport';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { registrarAuditoria } from '../lib/audit';
+import { OfficialAttendanceSheets } from './OfficialAttendanceSheets';
 
 interface StudentsViewProps {
   user: Perfil;
@@ -62,7 +64,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
 }) => {
   const isDirectorOrAdmin = user.rol === 'superadmin' || user.rol === 'director' || user.rol === 'coordinador';
 
-  const [activeSubTab, setActiveSubTab] = useState<'asistencia' | 'nomina' | 'historial'>(
+  const [activeSubTab, setActiveSubTab] = useState<'asistencia' | 'nomina' | 'historial' | 'planillas'>(
     user.rol === 'superadmin' ? 'nomina' : 'asistencia'
   );
 
@@ -546,6 +548,8 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
       fetchNomina();
     } else if (activeSubTab === 'historial') {
       fetchHistorialSesiones();
+    } else if (activeSubTab === 'planillas') {
+      fetchAssignedGroups();
     }
   }, [activeSubTab, user.id]);
 
@@ -1043,30 +1047,41 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
   return (
     <div className="space-y-5 pb-20">
       {/* Top Selector Subtabs */}
-      <div className="flex bg-slate-200 p-1 rounded-2xl">
+      <div className="flex bg-slate-200 p-1 rounded-2xl gap-1">
         <button
           onClick={() => setActiveSubTab('asistencia')}
-          className={`flex-1 py-2.5 rounded-xl text-xs font-extrabold transition-all ${
-            activeSubTab === 'asistencia' ? 'bg-[#00A651] text-white shadow-sm' : 'text-slate-700'
+          className={`flex-1 py-2.5 rounded-xl text-xs font-extrabold transition-all text-center cursor-pointer ${
+            activeSubTab === 'asistencia' ? 'bg-[#00A651] text-white shadow-sm' : 'text-slate-700 hover:text-slate-900'
           }`}
         >
           Asistencia Diaria
         </button>
         <button
           onClick={() => setActiveSubTab('nomina')}
-          className={`flex-1 py-2.5 rounded-xl text-xs font-extrabold transition-all ${
-            activeSubTab === 'nomina' ? 'bg-[#00A651] text-white shadow-sm' : 'text-slate-700'
+          className={`flex-1 py-2.5 rounded-xl text-xs font-extrabold transition-all text-center cursor-pointer ${
+            activeSubTab === 'nomina' ? 'bg-[#00A651] text-white shadow-sm' : 'text-slate-700 hover:text-slate-900'
           }`}
         >
-          Nómina de Inscritos
+          Nómina
         </button>
         <button
           onClick={() => setActiveSubTab('historial')}
-          className={`flex-1 py-2.5 rounded-xl text-xs font-extrabold transition-all ${
-            activeSubTab === 'historial' ? 'bg-[#00A651] text-white shadow-sm' : 'text-slate-700'
+          className={`flex-1 py-2.5 rounded-xl text-xs font-extrabold transition-all text-center cursor-pointer ${
+            activeSubTab === 'historial' ? 'bg-[#00A651] text-white shadow-sm' : 'text-slate-700 hover:text-slate-900'
           }`}
         >
           Historial
+        </button>
+        <button
+          onClick={() => setActiveSubTab('planillas')}
+          className={`flex-1 py-2.5 rounded-xl text-xs font-extrabold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+            activeSubTab === 'planillas'
+              ? 'bg-[#17324D] text-white shadow-sm ring-2 ring-amber-400/50'
+              : 'text-slate-700 hover:text-slate-950 font-bold'
+          }`}
+        >
+          <Printer className="w-3.5 h-3.5 text-amber-400" />
+          <span>Planillas Oficiales</span>
         </button>
       </div>
 
@@ -1142,7 +1157,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
               )}
 
               <div className="bg-white rounded-3xl p-5 shadow-xs border border-slate-200 space-y-4">
-                <div className="flex items-center justify-between">
+                <div className="flex flex-wrap items-center justify-between gap-2">
                   <h3 className="font-extrabold text-[#17324D] text-lg flex items-center gap-2">
                     {isDirectorOrAdmin ? (
                       <>
@@ -1156,9 +1171,19 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
                       </>
                     )}
                   </h3>
-                  <span className="text-xs text-slate-500 font-medium">
-                    {isDirectorOrAdmin ? 'Toma de asistencia institucional' : 'Control de asistencia docente'}
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setActiveSubTab('planillas')}
+                      className="px-3 py-1.5 bg-[#17324D] hover:bg-slate-900 text-white rounded-xl font-bold text-xs flex items-center gap-1.5 transition-all shadow-xs active:scale-95 cursor-pointer"
+                    >
+                      <Printer className="w-3.5 h-3.5 text-amber-300" />
+                      <span>Imprimir Planilla</span>
+                    </button>
+                    <span className="text-xs text-slate-500 font-medium hidden sm:inline">
+                      {isDirectorOrAdmin ? 'Toma de asistencia institucional' : 'Control docente'}
+                    </span>
+                  </div>
                 </div>
 
                 {/* Select Group, Date & Subject */}
@@ -1514,7 +1539,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
             </div>
           )}
         </div>
-      ) : (
+      ) : activeSubTab === 'historial' ? (
         /* ================= HISTORIAL DE ASISTENCIA VIEW ================= */
         <div className="space-y-4">
           <div className="flex items-center justify-between">
@@ -1683,6 +1708,14 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
             </div>
           )}
         </div>
+      ) : (
+        /* ================= PLANILLAS OFICIALES VIEW ================= */
+        <OfficialAttendanceSheets
+          user={user}
+          assignedGroups={assignedGroups}
+          isDirectorOrAdmin={isDirectorOrAdmin}
+          isOnline={isOnline}
+        />
       )}
       {/* ================= MODAL DE CONFIRMACIÓN DE AUDITORÍA INSTITUCIONAL ================= */}
       {showConfirmAuditModal && (
