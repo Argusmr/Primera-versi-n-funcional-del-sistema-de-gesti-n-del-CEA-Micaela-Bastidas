@@ -1,28 +1,51 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
-  Users,
+  ShieldCheck,
   UserCheck,
-  Clock,
+  Users,
   AlertTriangle,
-  FileSpreadsheet,
-  FilePlus,
+  FileCheck,
+  Calendar,
+  ShieldAlert,
+  Clock,
+  RefreshCw,
   WifiOff,
   ChevronRight,
-  ShieldCheck,
   Loader2,
   AlertCircle,
-  RefreshCw,
-  Building2,
-  Check,
-  X,
+  CheckCircle2,
+  XCircle,
+  FileSpreadsheet,
+  FilePlus,
+  BookOpen,
   Eye,
   Camera,
-  MapPin
+  MapPin,
+  Check,
+  X,
+  Layers,
+  ArrowUpRight
 } from 'lucide-react';
-import { Perfil, AsistenciaDocente, Estudiante, DatosInstitucionales, Sede } from '../types';
+import {
+  Perfil,
+  AsistenciaDocente,
+  Estudiante,
+  Grupo,
+  NivelEducativo,
+  AlertaEstudiante,
+  Seguimiento,
+  ControlDocumental,
+  ConfiguracionCalendario,
+  Auditoria,
+  DatosInstitucionales,
+  Sede
+} from '../types';
 import { getLocalDatosInstitucionales } from '../lib/institutional';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { getBoliviaTodayDate } from '../lib/geo';
+import { loadAuditoriaLogs } from '../lib/audit';
+import { loadConfiguracionesCalendario, FALLBACK_DIAS_TRABAJADOS } from '../lib/calendar';
+import { getLocalControlDocumentalMap, getControlDocumentalForDocente, calculateEstadoControl } from '../lib/controlDocumental';
 
 interface DirectorDashboardProps {
   user: Perfil;
@@ -48,33 +71,42 @@ export const DirectorDashboard: React.FC<DirectorDashboardProps> = ({
   const datos = datosInstitucionales || getLocalDatosInstitucionales();
   const [selectedSedeFilter, setSelectedSedeFilter] = useState<string>('Todas');
 
-  // Real data state
+  // Real Supabase data state
   const [docentes, setDocentes] = useState<Perfil[]>([]);
-  const [estudiantes, setEstudiantes] = useState<Estudiante[]>([]);
   const [asistenciasHoy, setAsistenciasHoy] = useState<AsistenciaDocente[]>([]);
+  const [estudiantes, setEstudiantes] = useState<Estudiante[]>([]);
+  const [grupos, setGrupos] = useState<Grupo[]>([]);
+  const [niveles, setNiveles] = useState<NivelEducativo[]>([]);
+  const [alertas, setAlertas] = useState<AlertaEstudiante[]>([]);
+  const [seguimientos, setSeguimientos] = useState<Seguimiento[]>([]);
+  const [controlDocMap, setControlDocMap] = useState<Record<string, ControlDocumental>>({});
+  const [calendarConfigs, setCalendarConfigs] = useState<ConfiguracionCalendario[]>([]);
+  const [ultimasAuditorias, setUltimasAuditorias] = useState<Auditoria[]>([]);
   const [sedesList, setSedesList] = useState<Sede[]>([]);
 
   // Loading & error state
   const [loading, setLoading] = useState<boolean>(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [actionProcessingId, setActionProcessingId] = useState<string | null>(null);
-  
-  // Selfie modal and signed URL state
+
+  // Selfie modal
   const [isSelfieModalOpen, setIsSelfieModalOpen] = useState<boolean>(false);
   const [loadingSelfie, setLoadingSelfie] = useState<boolean>(false);
   const [selfieError, setSelfieError] = useState<string | null>(null);
   const [previewSelfieUrl, setPreviewSelfieUrl] = useState<string | null>(null);
 
-  const todayStr = new Date().toLocaleDateString('es-BO', {
-    timeZone: 'America/La_Paz',
-    weekday: 'long',
-    day: 'numeric',
-    month: 'long',
-    year: 'numeric'
-  });
-
-  // Calculate local date format YYYY-MM-DD for today's queries in America/La_Paz timezone
   const todayIsoDate = useMemo(() => getBoliviaTodayDate(), []);
+  const currentMonthKey = useMemo(() => todayIsoDate.slice(0, 7), [todayIsoDate]);
+
+  const todayStr = useMemo(() => {
+    return new Date().toLocaleDateString('es-BO', {
+      timeZone: 'America/La_Paz',
+      weekday: 'long',
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric'
+    });
+  }, []);
 
   const handleOpenSelfie = async (rawPathOrUrl: string) => {
     if (!rawPathOrUrl) return;
@@ -83,25 +115,21 @@ export const DirectorDashboard: React.FC<DirectorDashboardProps> = ({
     setSelfieError(null);
     setPreviewSelfieUrl(null);
 
-    // If it's already a base64 data URL (e.g. from local/offline capture)
     if (rawPathOrUrl.startsWith('data:')) {
       setPreviewSelfieUrl(rawPathOrUrl);
       return;
     }
 
-    // Clean path if it includes bucket prefix or URL parts
     let path = rawPathOrUrl;
     if (path.includes('/selfies-asistencia/')) {
       path = path.split('/selfies-asistencia/')[1].split('?')[0];
     }
 
-    // If it's an external URL (not Supabase storage path)
     if (path.startsWith('http://') || path.startsWith('https://')) {
       setPreviewSelfieUrl(path);
       return;
     }
 
-    // Generate temporary signed URL (300 seconds) from private bucket 'selfies-asistencia'
     setLoadingSelfie(true);
     try {
       if (!supabase) {
@@ -125,13 +153,9 @@ export const DirectorDashboard: React.FC<DirectorDashboardProps> = ({
     }
   };
 
-  const loadDashboardData = useCallback(async () => {
+  const loadExecutiveData = useCallback(async () => {
     if (!isSupabaseConfigured || !supabase) {
       setLoading(false);
-      setDocentes([]);
-      setEstudiantes([]);
-      setAsistenciasHoy([]);
-      setSedesList([]);
       return;
     }
 
@@ -139,155 +163,226 @@ export const DirectorDashboard: React.FC<DirectorDashboardProps> = ({
     setFetchError(null);
 
     try {
-      // Execute parallel queries directly against Supabase without ambiguous embedded joins
+      // Parallel fetch of real Supabase tables
       const [
         docentesRes,
-        estudiantesRes,
         asistenciasRes,
-        sedesRes
+        estudiantesRes,
+        gruposRes,
+        nivelesRes,
+        alertasRes,
+        seguimientosRes,
+        sedesRes,
+        calendarRes,
+        auditoriaData
       ] = await Promise.all([
-        // 1. Total docentes: public.perfiles con rol='docente' y activo=true
+        // 1. Docentes activos (public.perfiles)
         supabase
           .from('perfiles')
           .select('*')
           .eq('rol', 'docente')
-          .eq('activo', true)
           .order('nombre_completo', { ascending: true }),
 
-        // 2. Total estudiantes: public.estudiantes con estado='activo'
-        supabase
-          .from('estudiantes')
-          .select('id, codigo_interno, nombre_completo, sexo, estado, sede_id, grupo_id, programa_id')
-          .eq('estado', 'activo'),
-
-        // 3. Resumen asistencia docente de hoy: public.asistencias_docentes sin embedded join
+        // 2. Asistencias docentes de hoy (public.asistencias_docentes)
         supabase
           .from('asistencias_docentes')
           .select('*')
           .eq('fecha_laboral', todayIsoDate)
           .order('created_at', { ascending: false }),
 
-        // 4. Sedes activas para nombres y pestañas dinámicas
+        // 3. Estudiantes activos (public.estudiantes)
+        supabase
+          .from('estudiantes')
+          .select('id, codigo_interno, nombre_completo, sexo, estado, sede_id, grupo_id, programa_id, nivel')
+          .eq('estado', 'activo'),
+
+        // 4. Grupos activos (public.grupos)
+        supabase
+          .from('grupos')
+          .select('*')
+          .eq('activo', true)
+          .order('nombre', { ascending: true }),
+
+        // 5. Niveles educativos (public.niveles)
+        supabase
+          .from('niveles')
+          .select('*')
+          .eq('activo', true)
+          .order('nombre', { ascending: true }),
+
+        // 6. Alertas estudiantiles (public.alertas_estudiantes)
+        supabase
+          .from('alertas_estudiantes')
+          .select('*')
+          .order('created_at', { ascending: false }),
+
+        // 7. Seguimientos (public.seguimientos)
+        supabase
+          .from('seguimientos')
+          .select('*')
+          .order('created_at', { ascending: false }),
+
+        // 8. Sedes (public.sedes)
         supabase
           .from('sedes')
           .select('*')
           .eq('activo', true)
-          .order('nombre', { ascending: true })
+          .order('nombre', { ascending: true }),
+
+        // 9. Calendario laboral (public.configuracion_calendario)
+        loadConfiguracionesCalendario(),
+
+        // 10. Últimas auditorías (public.auditoria)
+        loadAuditoriaLogs()
       ]);
 
-      if (docentesRes.error) {
-        throw new Error(`Error en public.perfiles: ${docentesRes.error.message}`);
-      }
-      if (estudiantesRes.error) {
-        throw new Error(`Error en public.estudiantes: ${estudiantesRes.error.message}`);
-      }
-      if (asistenciasRes.error) {
-        throw new Error(`Error en public.asistencias_docentes: ${asistenciasRes.error.message}`);
-      }
+      if (docentesRes.error) throw new Error(`Error en perfiles: ${docentesRes.error.message}`);
+      if (asistenciasRes.error) throw new Error(`Error en asistencias_docentes: ${asistenciasRes.error.message}`);
+      if (estudiantesRes.error) throw new Error(`Error en estudiantes: ${estudiantesRes.error.message}`);
+      if (gruposRes.error) throw new Error(`Error en grupos: ${gruposRes.error.message}`);
 
       const sedesData = (sedesRes.data || []) as Sede[];
       const sedesMap = new Map<string, string>();
       sedesData.forEach(s => sedesMap.set(s.id, s.nombre));
 
-      // Map docentes with sede_nombre resolved in memory
-      const mappedDocentes: Perfil[] = (docentesRes.data || []).map((d: any) => ({
+      // Map docentes
+      const rawDocentes = (docentesRes.data || []) as Perfil[];
+      const mappedDocentes: Perfil[] = rawDocentes.map((d: any) => ({
         ...d,
         sede_nombre: (d.sede_id && sedesMap.get(d.sede_id)) || d.sede_nombre || 'Sin Sede'
       }));
 
-      // Create lookup map of all docentes for fast in-memory joins
       const docentesMap = new Map<string, Perfil>();
       mappedDocentes.forEach(d => docentesMap.set(d.id, d));
 
-      // If any attendance record belongs to a teacher not active or in docentes list, fetch their basic profile
+      // Map asistencias
       const rawAsistencias = asistenciasRes.data || [];
-      const missingDocenteIds = Array.from(
-        new Set(rawAsistencias.map((a: any) => a.docente_id).filter((id: string) => id && !docentesMap.has(id)))
-      );
-
-      if (missingDocenteIds.length > 0) {
-        const extraDocentesRes = await supabase
-          .from('perfiles')
-          .select('*')
-          .in('id', missingDocenteIds);
-
-        if (extraDocentesRes.data) {
-          extraDocentesRes.data.forEach((d: any) => {
-            const sedeNom = (d.sede_id && sedesMap.get(d.sede_id)) || d.sede_nombre || 'Sin Sede';
-            docentesMap.set(d.id, { ...d, sede_nombre: sedeNom });
-          });
-        }
-      }
-
-      // Map joined fields for asistencias_docentes in memory by UUID
       const mappedAsistencias: AsistenciaDocente[] = rawAsistencias.map((a: any) => {
         const docente = a.docente_id ? docentesMap.get(a.docente_id) : null;
-        const docenteNombre = docente?.nombre_completo || 'Docente sin nombre';
-        const docenteSedeId = docente?.sede_id || a.sede_id;
-        const docenteSedeNombre = (docenteSedeId && sedesMap.get(docenteSedeId)) || docente?.sede_nombre || 'Sede sin asignar';
-
         return {
           ...a,
-          docente_nombre: docenteNombre,
-          sede_nombre: docenteSedeNombre,
-          sede_id: docenteSedeId
+          docente_nombre: docente?.nombre_completo || 'Docente',
+          sede_nombre: (a.sede_id && sedesMap.get(a.sede_id)) || docente?.sede_nombre || 'Sede sin asignar',
+          sede_id: a.sede_id || docente?.sede_id
         };
       });
 
+      // Load Control Documental map for all teachers
+      const initialMap = getLocalControlDocumentalMap();
+      const updatedCtrlMap: Record<string, ControlDocumental> = { ...initialMap };
+
+      for (const d of mappedDocentes) {
+        const ctrl = await getControlDocumentalForDocente(d.id);
+        updatedCtrlMap[d.id] = ctrl;
+      }
+
       setDocentes(mappedDocentes);
-      setEstudiantes((estudiantesRes.data || []) as Estudiante[]);
       setAsistenciasHoy(mappedAsistencias);
+      setEstudiantes((estudiantesRes.data || []) as Estudiante[]);
+      setGrupos((gruposRes.data || []) as Grupo[]);
+      setNiveles((nivelesRes.data || []) as NivelEducativo[]);
+      setAlertas((alertasRes.data || []) as AlertaEstudiante[]);
+      setSeguimientos((seguimientosRes.data || []) as Seguimiento[]);
+      setControlDocMap(updatedCtrlMap);
+      setCalendarConfigs(calendarRes);
+      setUltimasAuditorias(auditoriaData.slice(0, 6));
       setSedesList(sedesData);
     } catch (err: any) {
-      console.error('Error al cargar datos del Director Dashboard:', err);
-      setFetchError(err.message || 'Error al conectar con la base de datos.');
-      // En caso de fallo o error, vaciar datos (no usar mocks ficticios)
-      setDocentes([]);
-      setEstudiantes([]);
-      setAsistenciasHoy([]);
-      setSedesList([]);
+      console.error('Error al cargar datos del Panel Ejecutivo:', err);
+      setFetchError(err.message || 'Error de conexión con Supabase');
     } finally {
       setLoading(false);
     }
   }, [todayIsoDate]);
 
   useEffect(() => {
-    loadDashboardData();
-  }, [loadDashboardData]);
+    loadExecutiveData();
+  }, [loadExecutiveData]);
 
-  // Filter docentes, estudiantes, and asistencias by selected sede
+  // Sede filters
   const filteredDocentes = useMemo(() => {
     if (selectedSedeFilter === 'Todas') return docentes;
     return docentes.filter(d => d.sede_id === selectedSedeFilter || d.sede_nombre === selectedSedeFilter);
   }, [docentes, selectedSedeFilter]);
+
+  const filteredAsistencias = useMemo(() => {
+    if (selectedSedeFilter === 'Todas') return asistenciasHoy;
+    return asistenciasHoy.filter(a => a.sede_id === selectedSedeFilter || a.sede_nombre === selectedSedeFilter);
+  }, [asistenciasHoy, selectedSedeFilter]);
 
   const filteredEstudiantes = useMemo(() => {
     if (selectedSedeFilter === 'Todas') return estudiantes;
     return estudiantes.filter(e => e.sede_id === selectedSedeFilter);
   }, [estudiantes, selectedSedeFilter]);
 
-  const filteredAsistencias = useMemo(() => {
-    if (selectedSedeFilter === 'Todas') return asistenciasHoy;
-    return asistenciasHoy.filter(a => (a as any).sede_id === selectedSedeFilter || a.sede_nombre === selectedSedeFilter);
-  }, [asistenciasHoy, selectedSedeFilter]);
+  const filteredGrupos = useMemo(() => {
+    if (selectedSedeFilter === 'Todas') return grupos;
+    return grupos.filter(g => g.sede_id === selectedSedeFilter);
+  }, [grupos, selectedSedeFilter]);
 
-  // Teacher Attendance Statistics calculations (strictly based on public.asistencias_docentes.estado y origen_registro)
+  // 1. Control Docente del Día
   const totalDocentes = filteredDocentes.length;
-  const docentesIngresados = filteredAsistencias.filter(a => a.hora_ingreso_oficial || a.hora_ingreso_local).length;
-  const docentesPendientes = Math.max(0, totalDocentes - docentesIngresados);
-  const docentesPuntuales = filteredAsistencias.filter(a => a.estado === 'puntual').length;
-  const docentesAtrasados = filteredAsistencias.filter(a => a.estado === 'atraso').length;
-  const registrosOfflineCount = filteredAsistencias.filter(a => a.origen_registro === 'sin_conexion').length;
+  const docentesPresentes = filteredAsistencias.filter(
+    a => a.hora_ingreso_oficial || a.hora_ingreso_local || a.estado === 'puntual' || a.estado === 'atraso'
+  ).length;
 
-  // Pending exceptions requiring Director approval
-  const pendingExceptions = filteredAsistencias.filter(
+  const excepcionesPendientes = filteredAsistencias.filter(
     a =>
-      (a.estado_excepcion === 'pendiente_revision' ||
-       a.estado === 'pendiente_verificacion') &&
+      (a.estado_excepcion === 'pendiente_revision' || a.estado === 'pendiente_verificacion') &&
       a.estado_excepcion !== 'aprobada' &&
       a.estado_excepcion !== 'rechazada'
   );
 
+  const registrosIncompletos = filteredAsistencias.filter(
+    a =>
+      a.estado === 'registro_incompleto' ||
+      (a.hora_ingreso_oficial && !a.hora_salida_oficial && !a.hora_salida_local && a.estado !== 'puntual' && a.estado !== 'atraso')
+  ).length;
+
+  // 2. Resumen Estudiantil
+  const totalEstudiantes = filteredEstudiantes.length;
+  const gruposActivosCount = filteredGrupos.length;
+  const nivelesCount = niveles.length;
+
+  // 3. Seguimiento y Alertas
+  const alertasAmarillas = alertas.filter(
+    a => (a.tipo === 'amarillo_2_faltas' || a.faltas_consecutivas === 2) && a.estado === 'pendiente'
+  ).length;
+
+  const alertasRojas = alertas.filter(
+    a => (a.tipo === 'rojo_3_faltas' || a.faltas_consecutivas >= 3 || a.tipo === 'riesgo_prolongado') && a.estado === 'pendiente'
+  ).length;
+
+  const seguimientosPendientes = seguimientos.filter(s => s.estado === 'pendiente').length;
+
+  // 4. Control Documental
+  const docsPresentados = filteredDocentes.filter(d => {
+    const ctrl = controlDocMap[d.id];
+    return ctrl ? calculateEstadoControl(ctrl.tiene_plan_modular, ctrl.tiene_planificacion_curricular) === 'presentado' : false;
+  }).length;
+
+  const docsPendientes = Math.max(0, totalDocentes - docsPresentados);
+
+  // 5. Calendario Laboral
+  const currentCalendarConfig = useMemo(() => {
+    return calendarConfigs.find(c => c.mes === currentMonthKey);
+  }, [calendarConfigs, currentMonthKey]);
+
+  const diasEfectivosConfigurados = currentCalendarConfig
+    ? currentCalendarConfig.dias_trabajados
+    : FALLBACK_DIAS_TRABAJADOS;
+
+  const monthLabel = useMemo(() => {
+    try {
+      const [y, m] = currentMonthKey.split('-');
+      const d = new Date(Number(y), Number(m) - 1, 1);
+      return d.toLocaleDateString('es-BO', { month: 'long', year: 'numeric' });
+    } catch {
+      return currentMonthKey;
+    }
+  }, [currentMonthKey]);
+
+  // Exception approval actions
   const handleApproveException = async (recordId: string) => {
     if (!supabase) return;
     setActionProcessingId(recordId);
@@ -308,7 +403,7 @@ export const DirectorDashboard: React.FC<DirectorDashboardProps> = ({
       if (error) {
         alert('Error al aprobar excepción: ' + error.message);
       } else {
-        await loadDashboardData();
+        await loadExecutiveData();
       }
     } catch (err: any) {
       alert('Excepción al aprobar: ' + (err.message || err));
@@ -334,7 +429,7 @@ export const DirectorDashboard: React.FC<DirectorDashboardProps> = ({
       if (error) {
         alert('Error al rechazar excepción: ' + error.message);
       } else {
-        await loadDashboardData();
+        await loadExecutiveData();
       }
     } catch (err: any) {
       alert('Excepción al rechazar: ' + (err.message || err));
@@ -343,119 +438,120 @@ export const DirectorDashboard: React.FC<DirectorDashboardProps> = ({
     }
   };
 
-  // Student Statistics calculations (strictly based on public.estudiantes)
-  const totalEstudiantes = filteredEstudiantes.length;
-  const hombres = filteredEstudiantes.filter(e => (e.sexo || '').trim() === 'Masculino').length;
-  const mujeres = filteredEstudiantes.filter(e => (e.sexo || '').trim() === 'Femenino').length;
-  const sinSexo = filteredEstudiantes.filter(e => {
-    const s = (e.sexo || '').trim();
-    return s !== 'Masculino' && s !== 'Femenino';
-  }).length;
-
   return (
-    <div className="space-y-5 pb-20">
-      {/* Director Header Hero Banner */}
-      <div className="bg-gradient-to-br from-[#17324D] to-slate-900 rounded-3xl p-5 text-white shadow-xl space-y-3">
+    <div className="space-y-4 pb-20">
+      {/* 1. Header Hero Ejecutivo del Director */}
+      <div className="bg-gradient-to-br from-[#17324D] via-[#1b3d5e] to-slate-900 rounded-3xl p-5 text-white shadow-xl border border-slate-700/50 space-y-3.5">
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <ShieldCheck className="w-7 h-7 text-[#FFC845]" />
+          <div className="flex items-center gap-3">
+            <div className="w-11 h-11 rounded-2xl bg-amber-400/20 border border-amber-400/40 text-amber-300 flex items-center justify-center font-bold shadow-inner">
+              <ShieldCheck className="w-6 h-6" />
+            </div>
             <div>
-              <p className="text-xs text-[#FFC845] font-bold uppercase tracking-wider">{datos.cargo_director || 'Panel de Dirección'}</p>
-              <h2 className="text-xl font-extrabold">{user.nombre_completo}</h2>
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] text-amber-300 font-extrabold uppercase tracking-wider bg-amber-400/10 px-2 py-0.5 rounded-full border border-amber-400/20">
+                  {datos.cargo_director || 'Dirección General'}
+                </span>
+                <span className="text-[10px] text-emerald-300 font-extrabold bg-emerald-500/20 px-2 py-0.5 rounded-full border border-emerald-400/30">
+                  Panel Ejecutivo
+                </span>
+              </div>
+              <h2 className="text-lg sm:text-xl font-black tracking-tight mt-0.5">{user.nombre_completo}</h2>
             </div>
           </div>
+
           <div className="flex items-center gap-2">
             <button
-              onClick={loadDashboardData}
+              onClick={loadExecutiveData}
               disabled={loading}
-              title="Actualizar datos en vivo"
-              className="p-2 bg-white/10 hover:bg-white/20 active:scale-95 rounded-full text-white transition-all disabled:opacity-50"
+              title="Actualizar datos ejecutivos"
+              className="p-2 bg-white/10 hover:bg-white/20 active:scale-95 rounded-full text-white transition-all disabled:opacity-50 cursor-pointer"
             >
               <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
             </button>
-            <div className="bg-white/10 px-3 py-1.5 rounded-full text-xs font-semibold flex items-center gap-1.5 border border-white/20">
+            <div className="bg-white/10 px-2.5 py-1 rounded-full text-xs font-semibold flex items-center gap-1.5 border border-white/20">
               {isOnline ? (
-                <span className="flex items-center gap-1 text-emerald-400">
+                <span className="flex items-center gap-1 text-emerald-400 font-bold text-[11px]">
                   <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" /> En línea
                 </span>
               ) : (
-                <span className="flex items-center gap-1 text-amber-400">
-                  <WifiOff className="w-3.5 h-3.5" /> Sin conexión
+                <span className="flex items-center gap-1 text-amber-300 font-bold text-[11px]">
+                  <WifiOff className="w-3 h-3" /> Offline
                 </span>
               )}
             </div>
           </div>
         </div>
 
-        <div className="pt-2 border-t border-white/10 flex items-center justify-between text-xs text-slate-300 font-medium">
-          <span className="capitalize">{todayStr}</span>
-          <span className="text-[#FFC845] font-bold">{datos.nombre_corto}</span>
+        <div className="pt-2.5 border-t border-white/10 flex items-center justify-between text-xs text-slate-300 font-medium">
+          <span className="capitalize font-bold text-slate-200">{todayStr}</span>
+          <span className="text-amber-300 font-extrabold text-[11px]">{datos.nombre_corto}</span>
         </div>
       </div>
 
-      {/* Database Error Banner if any query failed */}
+      {/* Database Error Banner if any */}
       {fetchError && (
-        <div className="p-4 bg-red-50 border border-red-200 rounded-2xl flex items-start gap-3 text-red-800 text-xs">
-          <AlertCircle className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
+        <div className="p-3.5 bg-red-50 border border-red-200 rounded-2xl flex items-start gap-2.5 text-red-800 text-xs shadow-xs">
+          <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
           <div className="flex-1">
-            <strong className="block font-bold">Aviso de consulta a la base de datos</strong>
+            <strong className="block font-bold">Aviso de consulta a Supabase</strong>
             <p>{fetchError}</p>
           </div>
           <button
-            onClick={loadDashboardData}
-            className="px-3 py-1 bg-red-600 text-white rounded-xl font-bold hover:bg-red-700 transition-colors shrink-0"
+            onClick={loadExecutiveData}
+            className="px-2.5 py-1 bg-red-600 text-white rounded-xl font-bold hover:bg-red-700 transition-colors shrink-0 text-[11px]"
           >
             Reintentar
           </button>
         </div>
       )}
 
-      {/* Quick Action Buttons Grid */}
+      {/* Botones de Acción Rápida */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
         <button
           onClick={onOpenAddTeacherModal}
-          id="btn-dir-add-docente"
-          className="p-3 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white rounded-2xl font-bold text-xs flex flex-col items-center justify-center gap-1.5 shadow-md h-20 transition-all"
+          id="btn-exec-add-docente"
+          className="p-3 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white rounded-2xl font-extrabold text-xs flex flex-col items-center justify-center gap-1 shadow-xs h-18 transition-all cursor-pointer"
         >
-          <UserCheck className="w-6 h-6 text-[#FFC845]" />
-          <span>+ Añadir Docente</span>
+          <UserCheck className="w-5 h-5 text-amber-300" />
+          <span>+ Docente</span>
         </button>
 
         <button
           onClick={onOpenAddStudentModal}
-          id="btn-dir-add-estudiante"
-          className="p-3 bg-[#11B8AE] hover:bg-teal-700 active:scale-95 text-white rounded-2xl font-bold text-xs flex flex-col items-center justify-center gap-1.5 shadow-md h-20 transition-all"
+          id="btn-exec-add-estudiante"
+          className="p-3 bg-[#11B8AE] hover:bg-teal-700 active:scale-95 text-white rounded-2xl font-extrabold text-xs flex flex-col items-center justify-center gap-1 shadow-xs h-18 transition-all cursor-pointer"
         >
-          <Users className="w-6 h-6 text-white" />
-          <span>+ Añadir Estudiante</span>
+          <Users className="w-5 h-5 text-white" />
+          <span>+ Estudiante</span>
         </button>
 
         <button
           onClick={onOpenPublishModal}
-          id="btn-dir-publicar"
-          className="p-3 bg-amber-500 hover:bg-amber-600 active:scale-95 text-slate-950 rounded-2xl font-bold text-xs flex flex-col items-center justify-center gap-1.5 shadow-md h-20 transition-all"
+          id="btn-exec-publicar"
+          className="p-3 bg-amber-500 hover:bg-amber-600 active:scale-95 text-slate-950 rounded-2xl font-extrabold text-xs flex flex-col items-center justify-center gap-1 shadow-xs h-18 transition-all cursor-pointer"
         >
-          <FilePlus className="w-6 h-6 text-slate-950" />
+          <FilePlus className="w-5 h-5 text-slate-950" />
           <span>Publicar Aviso</span>
         </button>
 
         <button
           onClick={onDownloadReport}
-          id="btn-dir-reporte"
-          className="p-3 bg-slate-800 hover:bg-slate-900 active:scale-95 text-white rounded-2xl font-bold text-xs flex flex-col items-center justify-center gap-1.5 shadow-md h-20 transition-all"
+          id="btn-exec-reporte"
+          className="p-3 bg-slate-800 hover:bg-slate-900 active:scale-95 text-white rounded-2xl font-extrabold text-xs flex flex-col items-center justify-center gap-1 shadow-xs h-18 transition-all cursor-pointer"
         >
-          <FileSpreadsheet className="w-6 h-6 text-[#FFC845]" />
-          <span>Descargar Excel</span>
+          <FileSpreadsheet className="w-5 h-5 text-amber-300" />
+          <span>Reporte Excel</span>
         </button>
       </div>
 
       {/* Sede Filter Tabs */}
-      <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar">
+      <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar">
         <button
           onClick={() => setSelectedSedeFilter('Todas')}
-          className={`px-4 py-2 rounded-2xl text-xs font-bold whitespace-nowrap transition-all ${
+          className={`px-3.5 py-1.5 rounded-xl text-xs font-extrabold whitespace-nowrap transition-all cursor-pointer ${
             selectedSedeFilter === 'Todas'
-              ? 'bg-[#00A651] text-white shadow-sm'
+              ? 'bg-[#17324D] text-white shadow-xs'
               : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
           }`}
         >
@@ -465,9 +561,9 @@ export const DirectorDashboard: React.FC<DirectorDashboardProps> = ({
           <button
             key={sede.id}
             onClick={() => setSelectedSedeFilter(sede.id)}
-            className={`px-4 py-2 rounded-2xl text-xs font-bold whitespace-nowrap transition-all ${
+            className={`px-3.5 py-1.5 rounded-xl text-xs font-extrabold whitespace-nowrap transition-all cursor-pointer ${
               selectedSedeFilter === sede.id
-                ? 'bg-[#00A651] text-white shadow-sm'
+                ? 'bg-[#17324D] text-white shadow-xs'
                 : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
             }`}
           >
@@ -480,154 +576,108 @@ export const DirectorDashboard: React.FC<DirectorDashboardProps> = ({
       {loading && (
         <div className="p-8 bg-white rounded-3xl border border-slate-200 text-center flex flex-col items-center justify-center gap-2 shadow-xs">
           <Loader2 className="w-7 h-7 text-[#00A651] animate-spin" />
-          <span className="text-xs font-bold text-slate-500">Cargando métricas en vivo desde Supabase...</span>
+          <span className="text-xs font-bold text-slate-500">Cargando métricas ejecutivas desde Supabase...</span>
         </div>
       )}
 
       {!loading && (
-        <>
-          {/* Teacher Attendance Daily Summary */}
-          <div className="bg-white rounded-3xl p-5 shadow-sm border border-slate-200 space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+        <div className="space-y-4">
+          {/* ================= 1. CONTROL DOCENTE DEL DÍA ================= */}
+          <div className="bg-white rounded-3xl p-4 sm:p-5 border border-slate-200 shadow-xs space-y-3.5">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
               <div className="flex items-center gap-2">
-                <Clock className="w-6 h-6 text-[#00A651]" />
-                <h3 className="font-extrabold text-lg text-[#17324D]">Resumen Asistencia Docente</h3>
+                <div className="p-1.5 bg-emerald-50 text-emerald-700 rounded-xl">
+                  <UserCheck className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-sm sm:text-base text-[#17324D]">
+                    1. Control Docente del Día
+                  </h3>
+                  <span className="text-[11px] text-slate-500 font-medium">Fuente: asistencias_docentes</span>
+                </div>
               </div>
-              <span className="text-xs font-bold text-emerald-800 bg-emerald-50 px-3 py-1 rounded-full border border-emerald-200">
-                {docentesIngresados}/{totalDocentes} Asistieron
-              </span>
+              <button
+                onClick={() => onNavigateTab('asistencia')}
+                className="text-xs font-bold text-emerald-700 hover:text-emerald-800 flex items-center gap-0.5"
+              >
+                <span>Ver Asistencias</span>
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
             </div>
 
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
+            <div className="grid grid-cols-3 gap-2.5 text-center">
               <div className="p-3 bg-emerald-50 rounded-2xl border border-emerald-200">
-                <span className="text-[10px] font-bold text-emerald-700 uppercase block">Puntuales</span>
-                <strong className="text-xl font-extrabold text-[#00A651]">{docentesPuntuales}</strong>
+                <span className="text-[10px] font-bold text-emerald-800 uppercase tracking-wider block">Docentes Presentes</span>
+                <strong className="text-xl sm:text-2xl font-black text-emerald-700">{docentesPresentes}</strong>
+                <span className="text-[10px] text-emerald-600 block font-medium">de {totalDocentes} asignados</span>
               </div>
 
-              <div className="p-3 bg-amber-50 rounded-2xl border border-amber-200">
-                <span className="text-[10px] font-bold text-amber-700 uppercase block">Atrasos</span>
-                <strong className="text-xl font-extrabold text-amber-600">{docentesAtrasados}</strong>
+              <div className={`p-3 rounded-2xl border ${excepcionesPendientes.length > 0 ? 'bg-amber-50 border-amber-300' : 'bg-slate-50 border-slate-200'}`}>
+                <span className="text-[10px] font-bold text-amber-800 uppercase tracking-wider block">Excepciones Pendientes</span>
+                <strong className={`text-xl sm:text-2xl font-black ${excepcionesPendientes.length > 0 ? 'text-amber-600' : 'text-slate-700'}`}>
+                  {excepcionesPendientes.length}
+                </strong>
+                <span className="text-[10px] text-slate-500 block font-medium">por revisar</span>
               </div>
 
-              <div className="p-3 bg-red-50 rounded-2xl border border-red-200">
-                <span className="text-[10px] font-bold text-red-700 uppercase block">Pendientes</span>
-                <strong className="text-xl font-extrabold text-red-600">{docentesPendientes}</strong>
-              </div>
-
-              <div className="p-3 bg-yellow-50 rounded-2xl border border-yellow-300">
-                <span className="text-[10px] font-bold text-yellow-800 uppercase block">Sin Conexión</span>
-                <strong className="text-xl font-extrabold text-yellow-900">{registrosOfflineCount}</strong>
+              <div className={`p-3 rounded-2xl border ${registrosIncompletos > 0 ? 'bg-rose-50 border-rose-200' : 'bg-slate-50 border-slate-200'}`}>
+                <span className="text-[10px] font-bold text-rose-800 uppercase tracking-wider block">Registros Incompletos</span>
+                <strong className={`text-xl sm:text-2xl font-black ${registrosIncompletos > 0 ? 'text-rose-600' : 'text-slate-700'}`}>
+                  {registrosIncompletos}
+                </strong>
+                <span className="text-[10px] text-slate-500 block font-medium">sin cierre</span>
               </div>
             </div>
 
-            {/* Pending Exceptions Validation Section */}
-            {pendingExceptions.length > 0 && (
-              <div className="p-4 bg-amber-50/90 border-2 border-amber-300 rounded-3xl space-y-3 shadow-xs">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0" />
-                    <h4 className="font-extrabold text-sm text-amber-950">
-                      Excepciones de Asistencia Pendientes ({pendingExceptions.length})
-                    </h4>
-                  </div>
-                  <span className="text-[10px] font-bold text-amber-800 bg-amber-200/80 px-2.5 py-0.5 rounded-full">
-                    Requiere Validación
+            {/* Sub-bloque: Excepciones que requieren validación del director */}
+            {excepcionesPendientes.length > 0 && (
+              <div className="p-3 bg-amber-50/90 rounded-2xl border border-amber-300 space-y-2.5">
+                <div className="flex items-center justify-between text-xs text-amber-950 font-extrabold">
+                  <span className="flex items-center gap-1.5">
+                    <AlertTriangle className="w-4 h-4 text-amber-600" />
+                    Excepciones de Asistencia que Requieren tu Validación ({excepcionesPendientes.length})
                   </span>
                 </div>
 
-                <div className="space-y-3">
-                  {pendingExceptions.map((a) => {
+                <div className="space-y-2">
+                  {excepcionesPendientes.slice(0, 3).map((a) => {
                     const isProcessing = actionProcessingId === a.id;
-
                     return (
-                      <div
-                        key={a.id}
-                        className="p-3.5 bg-white rounded-2xl border border-amber-200 shadow-xs space-y-3"
-                      >
-                        <div className="flex items-start justify-between gap-2">
-                          <div>
-                            <span className="font-extrabold text-sm text-[#17324D] block">
-                              {a.docente_nombre}
-                            </span>
-                            <span className="text-xs text-slate-500 font-medium flex items-center gap-1 mt-0.5">
-                              <MapPin className="w-3.5 h-3.5 text-slate-400" />
-                              {a.sede_nombre}
-                              {a.hora_ingreso_oficial && (
-                                <span className="ml-1 text-slate-400">
-                                  • {new Date(a.hora_ingreso_oficial).toLocaleTimeString('es-BO', { timeZone: 'America/La_Paz', hour: '2-digit', minute: '2-digit' })}
-                                </span>
-                              )}
-                            </span>
-                          </div>
-
-                          <span className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold bg-amber-100 text-amber-900 border border-amber-300 uppercase">
+                      <div key={a.id} className="p-2.5 bg-white rounded-xl border border-amber-200 text-xs space-y-1.5 shadow-xs">
+                        <div className="flex items-center justify-between">
+                          <strong className="text-[#17324D]">{a.docente_nombre}</strong>
+                          <span className="text-[10px] px-2 py-0.5 bg-amber-100 text-amber-900 rounded-md font-bold uppercase">
                             {a.estado_gps_ingreso || 'gps_impreciso'}
                           </span>
                         </div>
-
-                        {/* Motivo / Justificación */}
-                        <div className="p-2.5 bg-slate-50 rounded-xl border border-slate-200 space-y-1 text-xs">
-                          <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wide block">
-                            Motivo / Observación del Docente:
-                          </span>
-                          <p className="text-xs text-slate-800 font-medium italic">
-                            "{a.observacion_excepcion || (!a.observacion?.trim().startsWith('[') && !a.observacion?.trim().startsWith('{') ? a.observacion : null) || 'Sin motivo detallado'}"
-                          </p>
-                        </div>
-
-                        {/* GPS metrics and Selfie preview button */}
-                        <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-600 pt-1">
-                          <div className="flex items-center gap-3">
-                            <span>
-                              Distancia:{' '}
-                              <strong className="text-slate-800">
-                                {a.distancia_m_ingreso !== undefined && a.distancia_m_ingreso !== null
-                                  ? `${a.distancia_m_ingreso} m`
-                                  : 'N/D'}
-                              </strong>
-                            </span>
-                            <span>
-                              Precisión:{' '}
-                              <strong className="text-slate-800">
-                                {a.precision_gps_ingreso !== undefined && a.precision_gps_ingreso !== null
-                                  ? `±${a.precision_gps_ingreso} m`
-                                  : 'N/D'}
-                              </strong>
-                            </span>
-                          </div>
-
+                        <p className="text-[11px] text-slate-600 italic">
+                          "{a.observacion_excepcion || a.observacion || 'Sin motivo detallado'}"
+                        </p>
+                        <div className="flex items-center justify-end gap-1.5 pt-1 border-t border-slate-100">
                           {a.selfie_url && (
                             <button
                               type="button"
                               onClick={() => handleOpenSelfie(a.selfie_url!)}
-                              className="px-2.5 py-1 bg-emerald-50 hover:bg-emerald-100 text-[#00A651] border border-emerald-300 rounded-xl font-bold text-xs flex items-center gap-1.5 transition-all"
+                              className="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-[10px] font-bold flex items-center gap-1"
                             >
-                              <Eye className="w-3.5 h-3.5" />
-                              <span>Ver Selfie</span>
+                              <Eye className="w-3 h-3" /> Selfie
                             </button>
                           )}
-                        </div>
-
-                        {/* Approve / Reject Action Buttons */}
-                        <div className="flex items-center gap-2 pt-1 border-t border-slate-100">
                           <button
                             type="button"
                             disabled={isProcessing}
                             onClick={() => handleApproveException(a.id)}
-                            className="flex-1 h-10 bg-[#00A651] hover:bg-[#008f45] active:scale-[0.98] text-white rounded-xl font-extrabold text-xs flex items-center justify-center gap-1.5 shadow-sm transition-all disabled:opacity-50"
+                            className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[10px] font-extrabold flex items-center gap-1"
                           >
-                            <Check className="w-4 h-4 text-emerald-200" />
-                            <span>{isProcessing ? 'Procesando...' : 'Aprobar'}</span>
+                            <Check className="w-3 h-3" /> Aprobar
                           </button>
-
                           <button
                             type="button"
                             disabled={isProcessing}
                             onClick={() => handleRejectException(a.id)}
-                            className="flex-1 h-10 bg-red-600 hover:bg-red-700 active:scale-[0.98] text-white rounded-xl font-extrabold text-xs flex items-center justify-center gap-1.5 shadow-sm transition-all disabled:opacity-50"
+                            className="px-2.5 py-1 bg-red-600 hover:bg-red-700 text-white rounded-lg text-[10px] font-extrabold flex items-center gap-1"
                           >
-                            <X className="w-4 h-4 text-red-200" />
-                            <span>{isProcessing ? 'Procesando...' : 'Rechazar'}</span>
+                            <X className="w-3 h-3" /> Rechazar
                           </button>
                         </div>
                       </div>
@@ -636,131 +686,244 @@ export const DirectorDashboard: React.FC<DirectorDashboardProps> = ({
                 </div>
               </div>
             )}
-
-            {/* Teacher shift status list */}
-            <div className="space-y-2 pt-2">
-              <h4 className="text-xs font-extrabold text-slate-500 uppercase tracking-wider">Estado de Jornada Hoy ({todayIsoDate})</h4>
-              {filteredAsistencias.length === 0 ? (
-                <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 text-center text-xs text-slate-500 font-medium">
-                  No se registran marcaciones docentes para la fecha laboral de hoy.
-                </div>
-              ) : (
-                filteredAsistencias.map((a) => {
-                  return (
-                    <div
-                      key={a.id}
-                      className="p-3 bg-slate-50 rounded-2xl border border-slate-200 flex items-center justify-between text-xs"
-                    >
-                      <div>
-                        <span className="font-bold text-[#17324D] block text-sm">{a.docente_nombre}</span>
-                        <span className="text-slate-500">{a.sede_nombre}</span>
-                        {a.estado_excepcion && a.estado_excepcion !== 'ninguna' && (
-                          <div className="mt-1 flex items-center gap-1.5">
-                            <span
-                              className={`inline-block px-2 py-0.5 rounded-md font-bold text-[9px] uppercase ${
-                                a.estado_excepcion === 'aprobada'
-                                  ? 'bg-emerald-100 text-emerald-800'
-                                  : a.estado_excepcion === 'rechazada'
-                                  ? 'bg-red-100 text-red-800'
-                                  : 'bg-amber-100 text-amber-900'
-                              }`}
-                            >
-                              Excepción: {a.estado_excepcion}
-                            </span>
-                            {a.selfie_url && (
-                              <button
-                                type="button"
-                                onClick={() => handleOpenSelfie(a.selfie_url!)}
-                                className="text-slate-500 hover:text-[#00A651] font-bold text-[10px] underline flex items-center gap-0.5"
-                              >
-                                <Eye className="w-3 h-3" /> Selfie
-                              </button>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                      <div className="text-right">
-                        <span
-                          className={`inline-block px-2.5 py-1 rounded-full font-bold uppercase text-[10px] ${
-                            a.estado === 'puntual'
-                              ? 'bg-emerald-100 text-emerald-800'
-                              : a.estado === 'atraso'
-                              ? 'bg-amber-100 text-amber-800'
-                              : 'bg-slate-200 text-slate-700'
-                          }`}
-                        >
-                          {a.estado}
-                        </span>
-                        {a.origen_registro === 'sin_conexion' && (
-                          <span className="block text-[10px] font-bold text-amber-700 mt-0.5">Offline no verificado</span>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })
-              )}
-            </div>
           </div>
 
-          {/* Student Attendance & Statistics Card */}
-          <div className="bg-white rounded-3xl p-5 shadow-sm border border-slate-200 space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+          {/* ================= 2. RESUMEN ESTUDIANTIL ================= */}
+          <div className="bg-white rounded-3xl p-4 sm:p-5 border border-slate-200 shadow-xs space-y-3.5">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
               <div className="flex items-center gap-2">
-                <Users className="w-6 h-6 text-[#00A651]" />
-                <h3 className="font-extrabold text-lg text-[#17324D]">Estudiantes y Matrícula Activa</h3>
+                <div className="p-1.5 bg-blue-50 text-blue-700 rounded-xl">
+                  <Users className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-sm sm:text-base text-[#17324D]">
+                    2. Resumen Estudiantil y Académico
+                  </h3>
+                  <span className="text-[11px] text-slate-500 font-medium">Fuentes: estudiantes, grupos, niveles</span>
+                </div>
               </div>
               <button
                 onClick={() => onNavigateTab('estudiantes')}
-                className="text-xs font-bold text-[#00A651] hover:underline flex items-center gap-1"
+                className="text-xs font-bold text-blue-700 hover:text-blue-800 flex items-center gap-0.5"
               >
-                Ver Todo <ChevronRight className="w-4 h-4" />
+                <span>Ver Estudiantes</span>
+                <ChevronRight className="w-3.5 h-3.5" />
               </button>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-center">
-              <div className="p-3 bg-emerald-50 rounded-2xl border border-emerald-200">
-                <span className="text-[10px] font-bold text-emerald-700 uppercase block">Inscritos Activos</span>
-                <strong className="text-2xl font-extrabold text-[#00A651]">{totalEstudiantes}</strong>
-              </div>
-
+            <div className="grid grid-cols-3 gap-2.5 text-center">
               <div className="p-3 bg-blue-50 rounded-2xl border border-blue-200">
-                <span className="text-[10px] font-bold text-blue-700 uppercase block">Masculino</span>
-                <strong className="text-2xl font-extrabold text-blue-900">{hombres}</strong>
-                <span className="text-[10px] text-blue-600 block font-medium">
-                  ({totalEstudiantes > 0 ? Math.round((hombres / totalEstudiantes) * 100) : 0}%)
-                </span>
+                <span className="text-[10px] font-bold text-blue-800 uppercase tracking-wider block">Estudiantes Activos</span>
+                <strong className="text-xl sm:text-2xl font-black text-blue-900">{totalEstudiantes}</strong>
+                <span className="text-[10px] text-blue-600 block font-medium">matriculados</span>
               </div>
 
-              <div className="p-3 bg-pink-50 rounded-2xl border border-pink-200">
-                <span className="text-[10px] font-bold text-pink-700 uppercase block">Femenino</span>
-                <strong className="text-2xl font-extrabold text-pink-900">{mujeres}</strong>
-                <span className="text-[10px] text-pink-600 block font-medium">
-                  ({totalEstudiantes > 0 ? Math.round((mujeres / totalEstudiantes) * 100) : 0}%)
-                </span>
+              <div className="p-3 bg-indigo-50 rounded-2xl border border-indigo-200">
+                <span className="text-[10px] font-bold text-indigo-800 uppercase tracking-wider block">Grupos / Cursos</span>
+                <strong className="text-xl sm:text-2xl font-black text-indigo-900">{gruposActivosCount}</strong>
+                <span className="text-[10px] text-indigo-600 block font-medium">habilitados</span>
               </div>
-            </div>
 
-            {sinSexo > 0 && (
-              <div className="text-[11px] font-medium text-slate-500 text-center bg-slate-50 py-1.5 px-3 rounded-xl border border-slate-200">
-                Estudiantes sin sexo especificado en base de datos: <strong className="text-slate-800">{sinSexo}</strong>
+              <div className="p-3 bg-purple-50 rounded-2xl border border-purple-200">
+                <span className="text-[10px] font-bold text-purple-800 uppercase tracking-wider block">Niveles Educativos</span>
+                <strong className="text-xl sm:text-2xl font-black text-purple-900">{nivelesCount}</strong>
+                <span className="text-[10px] text-purple-600 block font-medium">en oferta</span>
               </div>
-            )}
-
-            {/* At risk alerts preview - Empty state until real follow-up module connects */}
-            <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl space-y-2">
-              <div className="flex items-center justify-between text-xs text-slate-700 font-bold">
-                <span className="flex items-center gap-1.5">
-                  <AlertTriangle className="w-4 h-4 text-amber-500" />
-                  Alertas y Seguimiento Estudiantil
-                </span>
-                <span className="bg-slate-200 text-slate-700 px-2 py-0.5 rounded-full text-[10px]">0 Alertas</span>
-              </div>
-              <p className="text-xs text-slate-500 font-medium">
-                No hay alertas activas de deserción o faltas consecutivas registradas en el sistema para esta jornada.
-              </p>
             </div>
           </div>
-        </>
+
+          {/* ================= 3. SEGUIMIENTO Y ALERTAS ================= */}
+          <div className="bg-white rounded-3xl p-4 sm:p-5 border border-slate-200 shadow-xs space-y-3.5">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
+              <div className="flex items-center gap-2">
+                <div className="p-1.5 bg-amber-50 text-amber-700 rounded-xl">
+                  <AlertTriangle className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-sm sm:text-base text-[#17324D]">
+                    3. Seguimiento y Alertas Estudiantiles
+                  </h3>
+                  <span className="text-[11px] text-slate-500 font-medium">Fuentes: alertas_estudiantes, seguimientos</span>
+                </div>
+              </div>
+              <button
+                onClick={() => onNavigateTab('seguimiento')}
+                className="text-xs font-bold text-amber-700 hover:text-amber-800 flex items-center gap-0.5"
+              >
+                <span>Ver Módulo</span>
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-3 gap-2.5 text-center">
+              <div className="p-3 bg-yellow-50 rounded-2xl border border-yellow-300">
+                <span className="text-[10px] font-bold text-yellow-900 uppercase tracking-wider block">Alertas Amarillas</span>
+                <strong className="text-xl sm:text-2xl font-black text-yellow-800">{alertasAmarillas}</strong>
+                <span className="text-[10px] text-yellow-700 block font-medium">2 faltas consecutivas</span>
+              </div>
+
+              <div className="p-3 bg-red-50 rounded-2xl border border-red-200">
+                <span className="text-[10px] font-bold text-red-800 uppercase tracking-wider block">Alertas Rojas</span>
+                <strong className="text-xl sm:text-2xl font-black text-red-600">{alertasRojas}</strong>
+                <span className="text-[10px] text-red-500 block font-medium">3+ faltas / riesgo</span>
+              </div>
+
+              <div className="p-3 bg-slate-50 rounded-2xl border border-slate-200">
+                <span className="text-[10px] font-bold text-slate-700 uppercase tracking-wider block">Seguimientos Pendientes</span>
+                <strong className="text-xl sm:text-2xl font-black text-slate-800">{seguimientosPendientes}</strong>
+                <span className="text-[10px] text-slate-500 block font-medium">casos abiertos</span>
+              </div>
+            </div>
+          </div>
+
+          {/* ================= 4. CONTROL DOCUMENTAL ================= */}
+          <div className="bg-white rounded-3xl p-4 sm:p-5 border border-slate-200 shadow-xs space-y-3.5">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
+              <div className="flex items-center gap-2">
+                <div className="p-1.5 bg-emerald-50 text-emerald-700 rounded-xl">
+                  <FileCheck className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-sm sm:text-base text-[#17324D]">
+                    4. Control Documental Docente
+                  </h3>
+                  <span className="text-[11px] text-slate-500 font-medium">Fuente: control_documental (Plan Modular & Plan Curricular)</span>
+                </div>
+              </div>
+              <button
+                onClick={() => onNavigateTab('docentes')}
+                className="text-xs font-bold text-emerald-700 hover:text-emerald-800 flex items-center gap-0.5"
+              >
+                <span>Administrar Docentes</span>
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2.5 text-center">
+              <div className="p-3 bg-emerald-50 rounded-2xl border border-emerald-200">
+                <span className="text-[10px] font-bold text-emerald-800 uppercase tracking-wider block">Documentos Presentados</span>
+                <strong className="text-xl sm:text-2xl font-black text-emerald-700">{docsPresentados}</strong>
+                <span className="text-[10px] text-emerald-600 block font-medium">
+                  ({totalDocentes > 0 ? Math.round((docsPresentados / totalDocentes) * 100) : 0}% al día)
+                </span>
+              </div>
+
+              <div className={`p-3 rounded-2xl border ${docsPendientes > 0 ? 'bg-amber-50 border-amber-300' : 'bg-slate-50 border-slate-200'}`}>
+                <span className="text-[10px] font-bold text-amber-800 uppercase tracking-wider block">Documentos Pendientes</span>
+                <strong className={`text-xl sm:text-2xl font-black ${docsPendientes > 0 ? 'text-amber-700' : 'text-slate-700'}`}>
+                  {docsPendientes}
+                </strong>
+                <span className="text-[10px] text-slate-500 block font-medium">docentes por regularizar</span>
+              </div>
+            </div>
+          </div>
+
+          {/* ================= 5. CALENDARIO LABORAL ================= */}
+          <div className="bg-white rounded-3xl p-4 sm:p-5 border border-slate-200 shadow-xs space-y-3.5">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
+              <div className="flex items-center gap-2">
+                <div className="p-1.5 bg-indigo-50 text-indigo-700 rounded-xl">
+                  <Calendar className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-sm sm:text-base text-[#17324D]">
+                    5. Calendario Laboral Institucional
+                  </h3>
+                  <span className="text-[11px] text-slate-500 font-medium">Fuente: configuracion_calendario</span>
+                </div>
+              </div>
+              <button
+                onClick={() => onNavigateTab('admin')}
+                className="text-xs font-bold text-indigo-700 hover:text-indigo-800 flex items-center gap-0.5"
+              >
+                <span>Configurar Días</span>
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-xs">
+              <div className="p-3 bg-indigo-50/80 rounded-2xl border border-indigo-200 text-center">
+                <span className="text-[10px] font-bold text-indigo-800 uppercase tracking-wider block">Mes Actual</span>
+                <strong className="text-base sm:text-lg font-black text-indigo-950 capitalize block mt-0.5">{monthLabel}</strong>
+                <span className="text-[10px] text-indigo-600 font-mono font-bold">({currentMonthKey})</span>
+              </div>
+
+              <div className="p-3 bg-slate-50 rounded-2xl border border-slate-200 text-center">
+                <span className="text-[10px] font-bold text-slate-600 uppercase tracking-wider block">Días Efectivos Configurados</span>
+                <strong className="text-xl sm:text-2xl font-black text-slate-800 block mt-0.5">{diasEfectivosConfigurados} días</strong>
+                <span className="text-[10px] text-slate-500 block font-medium">para reportes oficiales</span>
+              </div>
+
+              <div className="p-3 bg-slate-50 rounded-2xl border border-slate-200 flex flex-col justify-center">
+                <span className="text-[10px] font-bold text-slate-600 uppercase tracking-wider block mb-0.5">Observaciones del Mes:</span>
+                <p className="text-[11px] text-slate-800 font-medium italic line-clamp-2">
+                  "{currentCalendarConfig?.observacion || 'Sin observaciones registradas para este periodo mensual.'}"
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* ================= 6. ÚLTIMAS ACCIONES (AUDITORÍA) ================= */}
+          <div className="bg-white rounded-3xl p-4 sm:p-5 border border-slate-200 shadow-xs space-y-3.5">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
+              <div className="flex items-center gap-2">
+                <div className="p-1.5 bg-amber-50 text-amber-700 rounded-xl">
+                  <ShieldAlert className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-sm sm:text-base text-[#17324D]">
+                    6. Últimas Acciones Institucionales
+                  </h3>
+                  <span className="text-[11px] text-slate-500 font-medium">Fuente: auditoria</span>
+                </div>
+              </div>
+              <button
+                onClick={() => onNavigateTab('admin')}
+                className="text-xs font-bold text-amber-700 hover:text-amber-800 flex items-center gap-0.5"
+              >
+                <span>Panel Auditoría</span>
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            {ultimasAuditorias.length === 0 ? (
+              <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 text-center text-xs text-slate-500 font-medium">
+                No hay registros recientes de auditoría en Supabase.
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {ultimasAuditorias.map((aud) => (
+                  <div
+                    key={aud.id}
+                    className="p-3 bg-slate-50 hover:bg-slate-100/80 transition-colors rounded-2xl border border-slate-200/90 text-xs space-y-1"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="space-y-0.5">
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono text-[10px] font-bold px-2 py-0.5 bg-slate-200 text-slate-800 rounded-md">
+                            {aud.tabla_afectada}
+                          </span>
+                          <strong className="text-slate-900 font-bold">{aud.accion}</strong>
+                        </div>
+                        <span className="text-[11px] text-slate-600 block">
+                          Por: <strong className="text-slate-800">{aud.usuario_nombre}</strong>
+                        </span>
+                      </div>
+                      <span className="text-[10px] text-slate-400 whitespace-nowrap">
+                        {aud.created_at ? new Date(aud.created_at).toLocaleTimeString('es-BO', { hour: '2-digit', minute: '2-digit' }) : ''}
+                      </span>
+                    </div>
+                    {aud.motivo_correccion && (
+                      <p className="text-[11px] text-amber-900 bg-amber-50 p-1.5 rounded-lg border border-amber-200/60 font-medium italic">
+                        Motivo: "{aud.motivo_correccion}"
+                      </p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
       )}
 
       {/* Selfie Preview Modal */}
@@ -817,7 +980,7 @@ export const DirectorDashboard: React.FC<DirectorDashboardProps> = ({
                 setPreviewSelfieUrl(null);
                 setSelfieError(null);
               }}
-              className="w-full py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-extrabold text-xs rounded-xl transition-all"
+              className="w-full py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-extrabold text-xs rounded-xl transition-all cursor-pointer"
             >
               Cerrar
             </button>
