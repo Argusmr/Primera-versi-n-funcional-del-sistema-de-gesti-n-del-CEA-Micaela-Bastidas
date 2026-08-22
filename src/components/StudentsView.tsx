@@ -55,6 +55,8 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
   isOnline,
   onOpenAddStudentModal
 }) => {
+  const isDirectorOrAdmin = user.rol === 'superadmin' || user.rol === 'director' || user.rol === 'coordinador';
+
   const [activeSubTab, setActiveSubTab] = useState<'asistencia' | 'nomina' | 'historial'>(
     user.rol === 'superadmin' ? 'nomina' : 'asistencia'
   );
@@ -90,13 +92,13 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
   const [loadingNomina, setLoadingNomina] = useState<boolean>(false);
   const [nominaError, setNominaError] = useState<string | null>(null);
 
-  // Historial State from Supabase (Only for authenticated teacher: docente_id = user.id)
+  // Historial State from Supabase (Docente: docente_id = user.id, Director/Superadmin: general institucional)
   const [historialSesiones, setHistorialSesiones] = useState<SesionHistorialItem[]>([]);
   const [loadingHistorial, setLoadingHistorial] = useState<boolean>(false);
   const [historialError, setHistorialError] = useState<string | null>(null);
   const [expandedSessionIds, setExpandedSessionIds] = useState<Set<string>>(new Set());
 
-  // 1. Cargar grupos asignados al docente autenticado
+  // 1. Cargar grupos (Todos los activos si es Director/Superadmin, o los asignados si es Docente)
   const fetchAssignedGroups = async () => {
     if (!isSupabaseConfigured || !supabase) {
       setGruposError('Supabase no está configurado.');
@@ -107,57 +109,89 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
     setLoadingGrupos(true);
     setGruposError(null);
     try {
-      const { data, error } = await supabase
-        .from('asignaciones_docentes')
-        .select(`
-          id,
-          docente_id,
-          grupo_id,
-          materia,
-          grupos (
-            id,
-            nombre,
-            carrera_especialidad,
-            nivel,
-            activo,
-            sede_id
-          )
-        `)
-        .eq('docente_id', user.id);
+      if (isDirectorOrAdmin) {
+        // Director/Superadmin: Cargar todos los grupos activos institucionales
+        const { data, error } = await supabase
+          .from('grupos')
+          .select('id, nombre, carrera_especialidad, nivel, activo, sede_id')
+          .eq('activo', true)
+          .order('nombre', { ascending: true });
 
-      if (error) {
-        throw error;
-      }
-
-      const list: Array<{ id: string; nombre: string; materia: string }> = [];
-      const seen = new Set<string>();
-
-      (data || []).forEach((asig: any) => {
-        const g = asig.grupos;
-        if (g && g.activo !== false && !seen.has(g.id)) {
-          seen.add(g.id);
-          list.push({
-            id: g.id,
-            nombre: g.nombre,
-            materia: asig.materia || g.carrera_especialidad || 'Docencia General'
-          });
+        if (error) {
+          throw error;
         }
-      });
 
-      setAssignedGroups(list);
+        const list: Array<{ id: string; nombre: string; materia: string }> = (data || []).map((g: any) => ({
+          id: g.id,
+          nombre: g.nombre,
+          materia: g.carrera_especialidad || 'Docencia General'
+        }));
 
-      if (list.length > 0) {
-        setSelectedGrupoId(prev => {
-          const exists = list.some(g => g.id === prev);
-          return exists ? prev : list[0].id;
-        });
+        setAssignedGroups(list);
+
+        if (list.length > 0) {
+          setSelectedGrupoId(prev => {
+            const exists = list.some(g => g.id === prev);
+            return exists ? prev : list[0].id;
+          });
+        } else {
+          setSelectedGrupoId('');
+          setAsistenciaStudents([]);
+        }
       } else {
-        setSelectedGrupoId('');
-        setAsistenciaStudents([]);
+        // Docente: Cargar grupos según asignaciones_docentes
+        const { data, error } = await supabase
+          .from('asignaciones_docentes')
+          .select(`
+            id,
+            docente_id,
+            grupo_id,
+            materia,
+            grupos (
+              id,
+              nombre,
+              carrera_especialidad,
+              nivel,
+              activo,
+              sede_id
+            )
+          `)
+          .eq('docente_id', user.id);
+
+        if (error) {
+          throw error;
+        }
+
+        const list: Array<{ id: string; nombre: string; materia: string }> = [];
+        const seen = new Set<string>();
+
+        (data || []).forEach((asig: any) => {
+          const g = asig.grupos;
+          if (g && g.activo !== false && !seen.has(g.id)) {
+            seen.add(g.id);
+            list.push({
+              id: g.id,
+              nombre: g.nombre,
+              materia: asig.materia || g.carrera_especialidad || 'Docencia General'
+            });
+          }
+        });
+
+        setAssignedGroups(list);
+
+        if (list.length > 0) {
+          setSelectedGrupoId(prev => {
+            const exists = list.some(g => g.id === prev);
+            return exists ? prev : list[0].id;
+          });
+        } else {
+          setSelectedGrupoId('');
+          setAsistenciaStudents([]);
+        }
       }
     } catch (err: any) {
-      console.error('Error al cargar grupos asignados desde Supabase:', err);
-      setGruposError(err.message || 'Error al consultar asignaciones del docente en Supabase.');
+      console.error('Error al cargar grupos desde Supabase:', err);
+      setGruposError(err.message || 'Error al consultar grupos en Supabase.');
       setAssignedGroups([]);
     } finally {
       setLoadingGrupos(false);
@@ -344,7 +378,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
     }
   };
 
-  // 4. Cargar historial real de sesiones de clase del docente autenticado
+  // 4. Cargar historial real de sesiones de clase (Institucional para Director/Superadmin, por docente_id para Docente)
   const fetchHistorialSesiones = async () => {
     if (!isSupabaseConfigured || !supabase) {
       setHistorialSesiones([]);
@@ -356,7 +390,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
     setHistorialError(null);
 
     try {
-      const { data, error } = await supabase
+      let query = supabase
         .from('sesiones_clase')
         .select(`
           id,
@@ -378,8 +412,13 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
               codigo_interno
             )
           )
-        `)
-        .eq('docente_id', user.id)
+        `);
+
+      if (!isDirectorOrAdmin) {
+        query = query.eq('docente_id', user.id);
+      }
+
+      const { data, error } = await query
         .order('fecha', { ascending: false })
         .order('created_at', { ascending: false });
 
@@ -917,9 +956,13 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
           {!loadingGrupos && !gruposError && assignedGroups.length === 0 && (
             <div className="p-8 text-center bg-white rounded-3xl border border-slate-200 shadow-xs space-y-3">
               <Users className="w-10 h-10 text-slate-300 mx-auto" />
-              <h4 className="font-extrabold text-slate-800 text-base">Sin grupos asignados</h4>
+              <h4 className="font-extrabold text-slate-800 text-base">
+                {isDirectorOrAdmin ? 'No hay grupos registrados' : 'Sin grupos asignados'}
+              </h4>
               <p className="text-xs text-slate-500 font-medium max-w-md mx-auto">
-                No tiene grupos asignados. Solicite al director la asignación correspondiente.
+                {isDirectorOrAdmin
+                  ? 'No se encontraron grupos activos en el sistema institucional. Cree un grupo desde el Panel de Administración.'
+                  : 'No tiene grupos asignados. Solicite al director la asignación correspondiente.'}
               </p>
               <button
                 type="button"
@@ -1282,7 +1325,9 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
           <div className="flex items-center justify-between">
             <div>
               <h3 className="font-extrabold text-base text-[#17324D]">Historial de Asistencia</h3>
-              <p className="text-xs text-slate-500 font-medium">Sesiones registradas por usted</p>
+              <p className="text-xs text-slate-500 font-medium">
+                {isDirectorOrAdmin ? 'Sesiones institucionales registradas' : 'Sesiones registradas por usted'}
+              </p>
             </div>
             <button
               onClick={fetchHistorialSesiones}
