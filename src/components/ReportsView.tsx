@@ -24,7 +24,9 @@ import {
   WifiOff,
   UserCheck2,
   FileText,
-  Loader2
+  Loader2,
+  TrendingUp,
+  Award
 } from 'lucide-react';
 import {
   Perfil,
@@ -56,6 +58,7 @@ import {
   getDiasTrabajadosForMonth,
   getLocalConfiguracionesCalendario
 } from '../lib/calendar';
+import { getBoliviaTodayDate } from '../lib/geo';
 
 interface ReportsViewProps {
   user: Perfil;
@@ -555,7 +558,31 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ user }) => {
     const faltas = asistenciasDocentesList.filter(a => a.estado === 'falta').length;
     const licencias = asistenciasDocentesList.filter(a => a.estado === 'licencia').length;
     const incompletos = asistenciasDocentesList.filter(a => a.estado === 'registro_incompleto').length;
+    const salidasAnticipadas = asistenciasDocentesList.filter(a => a.estado === 'salida_anticipada').length;
     const totalHoras = asistenciasDocentesList.reduce((acc, curr) => acc + (curr.horas_trabajadas || 0), 0);
+
+    // Mes seleccionado o de referencia para consultar la configuración del calendario laboral
+    const mesReferencia = docenteFilterMes || (docenteFilterFechaInicio ? docenteFilterFechaInicio.slice(0, 7) : getBoliviaTodayDate().slice(0, 7));
+    
+    // 1. Días efectivos configurados del mes seleccionado
+    const diasEfectivos = getDiasTrabajadosForMonth(mesReferencia, calendarConfigs);
+
+    // 2. Días asistidos reales: registros con estado puntual, atraso, salida_anticipada
+    const diasAsistidos = asistenciasDocentesList.filter(a =>
+      ['puntual', 'atraso', 'salida_anticipada'].includes(a.estado)
+    ).length;
+
+    const diasPuntuales = puntuales;
+
+    // 3. Porcentaje de asistencia mensual = (diasAsistidos / diasEfectivos) * 100
+    const porcentajeAsistencia = diasEfectivos > 0
+      ? Number(((diasAsistidos / diasEfectivos) * 100).toFixed(1))
+      : 0;
+
+    // 4. Porcentaje de puntualidad = (diasPuntuales / diasAsistidos) * 100
+    const porcentajePuntualidad = diasAsistidos > 0
+      ? Number(((diasPuntuales / diasAsistidos) * 100).toFixed(1))
+      : (total > 0 ? 0 : 100);
 
     return {
       total,
@@ -564,9 +591,16 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ user }) => {
       faltas,
       licencias,
       incompletos,
-      totalHoras: Math.round(totalHoras * 10) / 10
+      salidasAnticipadas,
+      totalHoras: Math.round(totalHoras * 10) / 10,
+      mesReferencia,
+      diasEfectivos,
+      diasAsistidos,
+      diasPuntuales,
+      porcentajeAsistencia,
+      porcentajePuntualidad
     };
-  }, [asistenciasDocentesList]);
+  }, [asistenciasDocentesList, docenteFilterMes, docenteFilterFechaInicio, calendarConfigs]);
 
   // Cargar historial cuando se entra a la pestaña o cambian los filtros
   useEffect(() => {
@@ -1387,7 +1421,100 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ user }) => {
             </div>
           )}
 
-          {/* Tarjetas de Resumen Métrico */}
+          {/* Panel de Cálculo Institucional de Asistencia Mensual (Días Efectivos) */}
+          <div className="bg-slate-900 rounded-3xl p-5 sm:p-6 text-white border border-slate-800 shadow-md space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-[#00A651] flex items-center justify-center font-bold">
+                  <Calendar className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h4 className="font-extrabold text-sm sm:text-base text-white tracking-tight">
+                      Cálculo Institucional de Asistencia Docente
+                    </h4>
+                    <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-[#00A651] text-white uppercase tracking-wider">
+                      Oficial CEA
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-400 font-medium mt-0.5">
+                    Período evaluado: <strong className="text-slate-200">{resumenDocente.mesReferencia}</strong> · Días configurados: <strong className="text-emerald-400">{resumenDocente.diasEfectivos} días</strong>
+                  </p>
+                </div>
+              </div>
+
+              <div className="text-right hidden sm:block">
+                <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block">Fórmula de Asistencia</span>
+                <span className="text-xs font-mono text-emerald-400 font-bold">(Días Asistidos / Días Efectivos) × 100</span>
+              </div>
+            </div>
+
+            {/* Cuadrícula de Métricas Clave Institucionales */}
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5">
+              {/* 1. Días Efectivos Configurables */}
+              <div className="bg-slate-800/80 rounded-2xl p-4 border border-slate-700/60 space-y-1.5">
+                <div className="flex items-center justify-between text-slate-400">
+                  <span className="text-[10px] font-extrabold uppercase tracking-wider">Días Efectivos</span>
+                  <Calendar className="w-4 h-4 text-emerald-400" />
+                </div>
+                <div className="flex items-baseline gap-1.5">
+                  <span className="text-3xl font-black text-white">{resumenDocente.diasEfectivos}</span>
+                  <span className="text-xs font-bold text-slate-400">días</span>
+                </div>
+                <p className="text-[11px] text-slate-400 font-medium">
+                  Configuración Dirección ({resumenDocente.mesReferencia})
+                </p>
+              </div>
+
+              {/* 2. Días Asistidos Reales */}
+              <div className="bg-slate-800/80 rounded-2xl p-4 border border-slate-700/60 space-y-1.5">
+                <div className="flex items-center justify-between text-slate-400">
+                  <span className="text-[10px] font-extrabold uppercase tracking-wider">Días Asistidos</span>
+                  <UserCheck className="w-4 h-4 text-emerald-400" />
+                </div>
+                <div className="flex items-baseline gap-1.5">
+                  <span className="text-3xl font-black text-emerald-400">{resumenDocente.diasAsistidos}</span>
+                  <span className="text-xs font-bold text-slate-400">jornadas</span>
+                </div>
+                <p className="text-[11px] text-slate-400 font-medium">
+                  Puntual ({resumenDocente.puntuales}) + Atraso ({resumenDocente.atrasos})
+                </p>
+              </div>
+
+              {/* 3. Porcentaje Asistencia Mensual */}
+              <div className="bg-slate-800/80 rounded-2xl p-4 border border-slate-700/60 space-y-1.5">
+                <div className="flex items-center justify-between text-slate-400">
+                  <span className="text-[10px] font-extrabold uppercase tracking-wider">% Asistencia</span>
+                  <TrendingUp className="w-4 h-4 text-[#FFC845]" />
+                </div>
+                <div className="flex items-baseline gap-1.5">
+                  <span className="text-3xl font-black text-[#FFC845]">{resumenDocente.porcentajeAsistencia}%</span>
+                </div>
+                <div className="w-full bg-slate-700 rounded-full h-1.5 overflow-hidden">
+                  <div
+                    className="bg-[#FFC845] h-full rounded-full transition-all duration-500"
+                    style={{ width: `${Math.min(100, resumenDocente.porcentajeAsistencia)}%` }}
+                  />
+                </div>
+              </div>
+
+              {/* 4. Porcentaje Puntualidad */}
+              <div className="bg-slate-800/80 rounded-2xl p-4 border border-slate-700/60 space-y-1.5">
+                <div className="flex items-center justify-between text-slate-400">
+                  <span className="text-[10px] font-extrabold uppercase tracking-wider">% Puntualidad</span>
+                  <Award className="w-4 h-4 text-cyan-400" />
+                </div>
+                <div className="flex items-baseline gap-1.5">
+                  <span className="text-3xl font-black text-cyan-300">{resumenDocente.porcentajePuntualidad}%</span>
+                </div>
+                <p className="text-[11px] text-slate-400 font-medium">
+                  Sobre {resumenDocente.diasAsistidos} {resumenDocente.diasAsistidos === 1 ? 'día asistido' : 'días asistidos'}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Tarjetas de Resumen de Registros y Desglose */}
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
             <div className="p-3.5 bg-white rounded-2xl border border-slate-200 shadow-xs space-y-1">
               <div className="flex items-center justify-between text-slate-500">
