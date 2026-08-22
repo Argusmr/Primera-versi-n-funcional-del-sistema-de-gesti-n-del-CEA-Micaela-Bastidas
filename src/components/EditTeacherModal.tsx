@@ -154,7 +154,7 @@ export const EditTeacherModal: React.FC<EditTeacherModalProps> = ({
               type="text"
               value={nombreCompleto}
               onChange={(e) => setNombreCompleto(e.target.value)}
-              placeholder="Ej. Prof. Mario Gutiérrez Flores"
+              placeholder="Ej. Lic. Juan Pérez Morales"
               className="w-full h-11 px-3.5 rounded-xl border border-slate-300 focus:border-[#00A651] focus:ring-2 focus:ring-emerald-200 text-sm font-medium outline-none"
               required
             />

@@ -777,7 +777,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                   type="text"
                   value={datosForm.nombre_director}
                   onChange={(e) => setDatosForm({ ...datosForm, nombre_director: e.target.value })}
-                  placeholder="Ej. Prof. Mario Gutiérrez Flores"
+                  placeholder="Ej. Lic. Juan Pérez Morales"
                   className="w-full h-12 px-4 rounded-xl border border-slate-300 focus:border-[#00A651] focus:ring-2 focus:ring-emerald-200 outline-none text-sm font-medium text-slate-900"
                   required
                 />

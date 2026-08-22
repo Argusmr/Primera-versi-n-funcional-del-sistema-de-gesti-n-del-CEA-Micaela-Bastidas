@@ -1,6 +1,5 @@
 import { Auditoria } from '../types';
 import { supabase, isSupabaseConfigured } from './supabase';
-import { MOCK_AUDITORIA } from './mockData';
 
 const AUDITORIA_STORAGE_KEY = 'cea_auditoria_logs_v1';
 
@@ -8,12 +7,17 @@ export function getLocalAuditoriaLogs(): Auditoria[] {
   try {
     const raw = localStorage.getItem(AUDITORIA_STORAGE_KEY);
     if (raw) {
-      return JSON.parse(raw);
+      const parsed: Auditoria[] = JSON.parse(raw);
+      // Filter out any legacy demonstrative/mock log entries
+      const cleaned = parsed.filter(
+        item => item.id !== 'aud-1' && item.usuario_nombre !== 'Prof. Mario Gutiérrez Flores'
+      );
+      return cleaned;
     }
   } catch (e) {
     console.warn('Error al leer logs de auditoría locales:', e);
   }
-  return MOCK_AUDITORIA;
+  return [];
 }
 
 export function saveLocalAuditoriaLog(log: Auditoria): void {
@@ -40,7 +44,7 @@ export async function loadAuditoriaLogs(): Promise<Auditoria[]> {
         return getLocalAuditoriaLogs();
       }
 
-      if (data && data.length > 0) {
+      if (data) {
         const mapped: Auditoria[] = data.map((item: any) => ({
           id: item.id,
           usuario_id: item.usuario_id,

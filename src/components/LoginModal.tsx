@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { LogIn, AlertCircle, Key } from 'lucide-react';
+import { LogIn, AlertCircle } from 'lucide-react';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { Perfil } from '../types';
 
@@ -16,7 +16,6 @@ export const LoginModal: React.FC<LoginModalProps> = ({ onLoginSuccess, onCancel
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [showSuperadminHelp, setShowSuperadminHelp] = useState(false);
 
   const handleSupabaseLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -129,29 +128,6 @@ export const LoginModal: React.FC<LoginModalProps> = ({ onLoginSuccess, onCancel
             <span>{loading ? 'Verificando...' : 'Iniciar Sesión'}</span>
           </button>
         </form>
-
-        {/* Admin Setup Guide Button */}
-        <div className="text-center pt-2">
-          <button
-            onClick={() => setShowSuperadminHelp(!showSuperadminHelp)}
-            className="text-xs text-slate-500 underline font-medium hover:text-slate-800"
-          >
-            ¿Cómo crear el primer Superadministrador en Supabase?
-          </button>
-        </div>
-
-        {showSuperadminHelp && (
-          <div className="p-3 bg-slate-100 rounded-xl text-xs text-slate-700 space-y-1.5 border border-slate-300">
-            <div className="font-bold text-[#17324D] flex items-center gap-1">
-              <Key className="w-3.5 h-3.5 text-[#00A651]" />
-              Guía de Primer Superadmin:
-            </div>
-            <ol className="list-decimal list-inside space-y-1 leading-relaxed">
-              <li>En Supabase Dashboard &gt; Auth: Crear usuario con email del Director.</li>
-              <li>En la tabla <code className="bg-white px-1 py-0.5 rounded">perfiles</code>: Insertar fila con el mismo UUID y <code className="bg-white px-1 py-0.5 rounded">rol = 'superadmin'</code>.</li>
-            </ol>
-          </div>
-        )}
 
         <button
           onClick={handleClose}

@@ -4,7 +4,7 @@ import { supabase, isSupabaseConfigured, checkIsOnline } from './supabase';
 export const DEFAULT_DATOS_INSTITUCIONALES: DatosInstitucionales = {
   nombre_completo: 'Centro de Educación Alternativa Micaela Bastidas',
   nombre_corto: 'CEA Micaela Bastidas',
-  nombre_director: 'Prof. Mario Gutiérrez Flores',
+  nombre_director: 'Dirección Institucional',
   cargo_director: 'Director General Institucional',
   direccion: 'Poroma - Chuquisaca, Bolivia',
   telefono: '+591 67891234',

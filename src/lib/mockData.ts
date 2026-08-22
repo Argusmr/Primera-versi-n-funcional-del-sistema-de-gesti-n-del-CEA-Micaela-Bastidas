@@ -100,7 +100,7 @@ export const INITIAL_HORARIOS: Horario[] = [
 
 export const MOCK_SUPERADMIN: Perfil = {
   id: 'usr-director',
-  nombre_completo: 'Prof. Mario Gutiérrez Flores',
+  nombre_completo: 'Director General Institucional',
   ci: '4567891 Sucre',
   rda: '102938',
   especialidad: 'Gestión Educativa & EPJA',
@@ -586,16 +586,4 @@ export const MOCK_PUBLICACIONES: Publicacion[] = [
   }
 ];
 
-export const MOCK_AUDITORIA: Auditoria[] = [
-  {
-    id: 'aud-1',
-    usuario_nombre: 'Prof. Mario Gutiérrez Flores',
-    accion: 'Modificación de horario de invierno',
-    tabla_afectada: 'horarios',
-    registro_afectado_id: 'hor-2',
-    valor_anterior: { hora_salida: '22:00' },
-    valor_nuevo: { hora_salida: '21:30' },
-    motivo_correccion: 'Aplicación de instructivo de horario de invierno por bajas temperaturas.',
-    created_at: '2026-07-28 10:15:00'
-  }
-];
+export const MOCK_AUDITORIA: Auditoria[] = [];
