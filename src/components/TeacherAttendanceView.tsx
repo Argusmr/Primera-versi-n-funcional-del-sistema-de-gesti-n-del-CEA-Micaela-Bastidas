@@ -16,9 +16,10 @@ import {
   RefreshCw,
   AlertCircle
 } from 'lucide-react';
-import { Perfil, AsistenciaDocente, ResumenAsistenciaDocenteMensual } from '../types';
+import { Perfil, AsistenciaDocente, ResumenAsistenciaDocenteMensual, ConfiguracionCalendario } from '../types';
 import { downloadDocenteAttendanceReport } from '../lib/excelExport';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { loadConfiguracionesCalendario, getDiasTrabajadosForMonth, getLocalConfiguracionesCalendario } from '../lib/calendar';
 
 interface TeacherAttendanceViewProps {
   user: Perfil;
@@ -30,11 +31,24 @@ export const TeacherAttendanceView: React.FC<TeacherAttendanceViewProps> = ({ us
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   });
   const [recordsState, setRecordsState] = useState<AsistenciaDocente[]>([]);
+  const [calendarConfigs, setCalendarConfigs] = useState<ConfiguracionCalendario[]>(() => getLocalConfiguracionesCalendario());
   const [loading, setLoading] = useState<boolean>(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [selectedSelfieUrl, setSelectedSelfieUrl] = useState<string | null>(null);
 
   const isDirectorOrAdmin = user.rol === 'superadmin' || user.rol === 'director' || user.rol === 'coordinador';
+
+  useEffect(() => {
+    loadConfiguracionesCalendario().then(configs => setCalendarConfigs(configs));
+
+    const handleCalendarChange = (e: any) => {
+      if (e.detail) {
+        setCalendarConfigs(e.detail);
+      }
+    };
+    window.addEventListener('configuracionCalendarioChanged', handleCalendarChange);
+    return () => window.removeEventListener('configuracionCalendarioChanged', handleCalendarChange);
+  }, []);
 
   // Fetch real records from public.asistencias_docentes
   const fetchAsistencias = async () => {
@@ -114,14 +128,16 @@ export const TeacherAttendanceView: React.FC<TeacherAttendanceViewProps> = ({ us
   // Filter records
   const records = recordsState;
 
-  const diasProgramados = 22;
+  const diasProgramados = getDiasTrabajadosForMonth(selectedMonth, calendarConfigs);
   const diasAsistidos = records.length;
   const diasPuntuales = records.filter(r => r.estado === 'puntual').length;
   const atrasos = records.filter(r => r.estado === 'atraso').length;
   const licencias = records.filter(r => r.estado === 'licencia').length;
   const faltas = records.filter(r => r.estado === 'falta').length;
 
-  const asistenciaPorcentaje = (diasAsistidos / diasProgramados) * 100;
+  const asistenciaPorcentaje = diasProgramados > 0
+    ? Math.min(100, (diasAsistidos / diasProgramados) * 100)
+    : 0;
   const puntualidadPorcentaje = diasAsistidos > 0 ? (diasPuntuales / diasAsistidos) * 100 : 100;
 
   const resumen: ResumenAsistenciaDocenteMensual = {

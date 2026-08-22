@@ -383,3 +383,14 @@ export interface DatosInstitucionales {
   lema_subtitulo: string;
 }
 
+export interface ConfiguracionCalendario {
+  id: string;
+  mes: string; // 'YYYY-MM'
+  dias_trabajados: number;
+  observacion?: string;
+  creado_por?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+

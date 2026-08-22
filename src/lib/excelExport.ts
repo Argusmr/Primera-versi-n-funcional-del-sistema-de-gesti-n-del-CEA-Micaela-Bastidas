@@ -1,5 +1,6 @@
 import * as XLSX from 'xlsx';
 import { AsistenciaDocente, Estudiante, AlertaEstudiante, Seguimiento, Perfil, ResumenAsistenciaDocenteMensual } from '../types';
+import { getBoliviaTodayDate } from './geo';
 
 export function downloadDocenteAttendanceReport(
   records: AsistenciaDocente[],
@@ -79,7 +80,7 @@ export function downloadDocenteAttendanceReport(
   }
 
   // Nombre de archivo con fecha o mes
-  const fileSuffix = mesAno ? mesAno.replace('-', '_') : new Date().toISOString().split('T')[0];
+  const fileSuffix = mesAno ? mesAno.replace('-', '_') : getBoliviaTodayDate();
   XLSX.writeFile(wb, `Reporte_Asistencia_Docente_${fileSuffix}.xlsx`);
 }
 
@@ -235,26 +236,32 @@ export function downloadStudentStatisticalReport(
 }
 
 export function downloadAtRiskReport(alertas: AlertaEstudiante[], seguimientos: Seguimiento[]) {
+  if (!alertas || alertas.length === 0) {
+    alert('No hay estudiantes en situación de riesgo registrados para exportar.');
+    return;
+  }
+
   const wb = XLSX.utils.book_new();
 
   const dataAlertas = alertas.map((a) => {
-    const seg = seguimientos.find(s => s.alerta_id === a.id);
+    const seg = (seguimientos || []).find(s => s.alerta_id === a.id);
     return {
-      'Estudiante': a.estudiante_nombre,
-      'Grupo': a.grupo_nombre,
-      'Docente Responsable': a.docente_nombre,
-      'Nivel de Alerta': a.tipo === 'rojo_3_faltas' ? 'ALERTA ROJA (3+ Faltas)' : 'ALERTA AMARILLA (2 Faltas)',
-      'Faltas Consecutivas': a.faltas_consecutivas,
-      'Estado Alerta': a.estado.toUpperCase(),
+      'Estudiante': a.estudiante_nombre || 'Estudiante sin registrar',
+      'Grupo': a.grupo_nombre || 'Sin grupo',
+      'Docente Responsable': a.docente_nombre || 'Sin docente asignado',
+      'Nivel de Alerta': a.tipo === 'rojo_3_faltas' ? 'ALERTA ROJA (3+ Faltas)' : a.tipo === 'amarillo_2_faltas' ? 'ALERTA AMARILLA (2 Faltas)' : 'RIESGO PROLONGADO',
+      'Faltas Consecutivas': a.faltas_consecutivas || 0,
+      'Estado Alerta': (a.estado || 'pendiente').toUpperCase(),
       'Fecha Último Seguimiento': seg ? seg.fecha : 'Pendiente',
-      'Acción Realizada': seg ? seg.accion_realizada.toUpperCase() : 'Ninguna',
+      'Acción Realizada': seg ? (seg.accion_realizada || '').toUpperCase() : 'Ninguna',
       'Resultado / Compromiso': seg ? seg.resultado : 'Sin intervención',
-      'Próxima Acción': seg ? seg.proxima_accion || 'N/A' : 'Requiere llamada/visita'
+      'Próxima Acción': seg ? (seg.proxima_accion || 'N/A') : 'Requiere llamada/visita'
     };
   });
 
   const ws = XLSX.utils.json_to_sheet(dataAlertas);
   XLSX.utils.book_append_sheet(wb, ws, 'Estudiantes en Riesgo');
 
-  XLSX.writeFile(wb, `Reporte_Estudiantes_En_Riesgo_${new Date().toISOString().slice(0, 10)}.xlsx`);
+  const fechaHoy = getBoliviaTodayDate();
+  XLSX.writeFile(wb, `Reporte_Estudiantes_En_Riesgo_${fechaHoy}.xlsx`);
 }

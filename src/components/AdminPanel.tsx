@@ -34,6 +34,7 @@ import {
   loadNivelesFromSupabase
 } from '../lib/academic';
 import { AuditView } from './AuditView';
+import { WorkCalendarConfig } from './WorkCalendarConfig';
 
 interface AdminPanelProps {
   user: Perfil;
@@ -47,7 +48,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   onUpdateDatosInstitucionales,
 }) => {
   const [activeAdminSubTab, setActiveAdminSubTab] = useState<
-    'datos' | 'horarios' | 'sedes' | 'programas' | 'auditoria'
+    'datos' | 'calendario' | 'horarios' | 'sedes' | 'programas' | 'auditoria'
   >('datos');
 
   // Academic Sub-section inside 'programas'
@@ -707,6 +708,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       <div className="flex bg-slate-200 p-1 rounded-2xl overflow-x-auto no-scrollbar">
         {[
           { id: 'datos', label: 'Datos institucionales' },
+          { id: 'calendario', label: 'Calendario Laboral' },
           { id: 'programas', label: 'Programas, Etapas y Niveles' },
           { id: 'horarios', label: 'Horarios' },
           { id: 'sedes', label: 'Sedes' },
@@ -1266,6 +1268,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           )}
         </div>
       )}
+
+      {/* CALENDARIO LABORAL (DÍAS EFECTIVOS) */}
+      {activeAdminSubTab === 'calendario' && <WorkCalendarConfig user={user} />}
 
       {/* AUDITORIA VIEW */}
       {activeAdminSubTab === 'auditoria' && <AuditView user={user} />}

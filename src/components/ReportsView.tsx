@@ -23,13 +23,21 @@ import {
   Wifi,
   WifiOff,
   UserCheck2,
-  FileText
+  FileText,
+  Loader2
 } from 'lucide-react';
-import { Perfil, Estudiante, Programa, NivelEducativo, AsistenciaDocente, EstadoAsistenciaDocente, ResumenAsistenciaDocenteMensual } from '../types';
 import {
-  MOCK_ALERTAS,
-  MOCK_SEGUIMIENTOS
-} from '../lib/mockData';
+  Perfil,
+  Estudiante,
+  Programa,
+  NivelEducativo,
+  AsistenciaDocente,
+  EstadoAsistenciaDocente,
+  ResumenAsistenciaDocenteMensual,
+  AlertaEstudiante,
+  Seguimiento,
+  ConfiguracionCalendario
+} from '../types';
 import {
   downloadDocenteAttendanceReport,
   downloadStudentEnrollmentReport,
@@ -43,6 +51,11 @@ import {
   getLocalNiveles
 } from '../lib/academic';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import {
+  loadConfiguracionesCalendario,
+  getDiasTrabajadosForMonth,
+  getLocalConfiguracionesCalendario
+} from '../lib/calendar';
 
 interface ReportsViewProps {
   user: Perfil;
@@ -114,6 +127,19 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ user }) => {
   const [asistenciasDocentesList, setAsistenciasDocentesList] = useState<AsistenciaDocente[]>([]);
   const [loadingDocentes, setLoadingDocentes] = useState<boolean>(false);
   const [docentesError, setDocentesError] = useState<string | null>(null);
+  const [calendarConfigs, setCalendarConfigs] = useState<ConfiguracionCalendario[]>(() => getLocalConfiguracionesCalendario());
+
+  useEffect(() => {
+    loadConfiguracionesCalendario().then(configs => setCalendarConfigs(configs));
+
+    const handleCalendarChange = (e: any) => {
+      if (e.detail) {
+        setCalendarConfigs(e.detail);
+      }
+    };
+    window.addEventListener('configuracionCalendarioChanged', handleCalendarChange);
+    return () => window.removeEventListener('configuracionCalendarioChanged', handleCalendarChange);
+  }, []);
 
   const refreshData = async () => {
     setIsLoading(true);
@@ -714,6 +740,9 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ user }) => {
       return;
     }
 
+    const mesExport = docenteFilterMes || selectedMonth || '';
+    const diasConfiguradosMes = getDiasTrabajadosForMonth(mesExport, calendarConfigs);
+
     // Calcular resumen mensual por docente con base en los registros reales filtrados
     const resumenMap = new Map<string, ResumenAsistenciaDocenteMensual>();
 
@@ -725,7 +754,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ user }) => {
         resumenMap.set(docId, {
           docente_id: docId,
           docente_nombre: docNombre,
-          dias_programados: 0,
+          dias_programados: diasConfiguradosMes,
           dias_asistidos: 0,
           dias_puntuales: 0,
           atrasos: 0,
@@ -741,7 +770,6 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ user }) => {
       }
 
       const item = resumenMap.get(docId)!;
-      item.dias_programados += 1;
       item.horas_trabajadas += Number(a.horas_trabajadas || 0);
 
       if (a.origen_registro === 'sin_conexion') {
@@ -768,11 +796,11 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ user }) => {
 
     const resumenesList: ResumenAsistenciaDocenteMensual[] = Array.from(resumenMap.values()).map(r => {
       const pctAsistencia = r.dias_programados > 0
-        ? Number(((r.dias_asistidos / r.dias_programados) * 100).toFixed(1))
+        ? Math.min(100, Number(((r.dias_asistidos / r.dias_programados) * 100).toFixed(1)))
         : 0;
       const pctPuntualidad = r.dias_asistidos > 0
         ? Number(((r.dias_puntuales / r.dias_asistidos) * 100).toFixed(1))
-        : 0;
+        : 100;
       return {
         ...r,
         horas_trabajadas: Number(r.horas_trabajadas.toFixed(2)),
@@ -781,7 +809,6 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ user }) => {
       };
     });
 
-    const mesExport = docenteFilterMes || selectedMonth || '';
     downloadDocenteAttendanceReport(asistenciasDocentesList, resumenesList, mesExport);
   };
 
@@ -789,8 +816,114 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ user }) => {
     downloadStudentEnrollmentReport(filteredEstudiantes, selectedSedePlanilla);
   };
 
-  const handleDownloadRiesgo = () => {
-    downloadAtRiskReport(MOCK_ALERTAS, MOCK_SEGUIMIENTOS);
+  const [downloadingRiesgo, setDownloadingRiesgo] = useState<boolean>(false);
+
+  const handleDownloadRiesgo = async () => {
+    if (!isSupabaseConfigured || !supabase) {
+      alert('Supabase no está configurado.');
+      return;
+    }
+
+    setDownloadingRiesgo(true);
+    try {
+      // 1. Query alertas_estudiantes with role filtering
+      let alertasQuery = supabase
+        .from('alertas_estudiantes')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      let seguimientosQuery = supabase
+        .from('seguimientos')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      // Docente role restriction
+      if (user.rol === 'docente') {
+        alertasQuery = alertasQuery.eq('docente_id', user.id);
+        seguimientosQuery = seguimientosQuery.eq('docente_id', user.id);
+      }
+
+      const [alertasRes, seguimientosRes] = await Promise.all([
+        alertasQuery,
+        seguimientosQuery
+      ]);
+
+      if (alertasRes.error) {
+        throw new Error(`Error al consultar alertas: ${alertasRes.error.message}`);
+      }
+      if (seguimientosRes.error) {
+        throw new Error(`Error al consultar seguimientos: ${seguimientosRes.error.message}`);
+      }
+
+      const rawAlertas = alertasRes.data || [];
+      const rawSeguimientos = seguimientosRes.data || [];
+
+      if (rawAlertas.length === 0) {
+        alert('No se encontraron registros de estudiantes en situación de riesgo en la base de datos.');
+        return;
+      }
+
+      // Collect IDs for enrichment
+      const estudianteIds = Array.from(
+        new Set([
+          ...rawAlertas.map((a: any) => a.estudiante_id),
+          ...rawSeguimientos.map((s: any) => s.estudiante_id)
+        ].filter(Boolean))
+      );
+
+      const grupoIds = Array.from(
+        new Set(rawAlertas.map((a: any) => a.grupo_id).filter(Boolean))
+      );
+
+      const docenteIds = Array.from(
+        new Set([
+          ...rawAlertas.map((a: any) => a.docente_id),
+          ...rawSeguimientos.map((s: any) => s.docente_id)
+        ].filter(Boolean))
+      );
+
+      // Fetch lookup dictionaries
+      const [estudiantesRes, gruposRes, perfilesRes] = await Promise.all([
+        estudianteIds.length > 0
+          ? supabase.from('estudiantes').select('id, nombre_completo, codigo_interno').in('id', estudianteIds)
+          : Promise.resolve({ data: [] }),
+        grupoIds.length > 0
+          ? supabase.from('grupos').select('id, nombre, carrera_especialidad').in('id', grupoIds)
+          : Promise.resolve({ data: [] }),
+        docenteIds.length > 0
+          ? supabase.from('perfiles').select('id, nombre_completo').in('id', docenteIds)
+          : Promise.resolve({ data: [] })
+      ]);
+
+      const estudiantesMap = new Map<string, string>();
+      ((estudiantesRes as any).data || []).forEach((e: any) => estudiantesMap.set(e.id, e.nombre_completo));
+
+      const gruposMap = new Map<string, string>();
+      ((gruposRes as any).data || []).forEach((g: any) => gruposMap.set(g.id, g.nombre));
+
+      const docentesMap = new Map<string, string>();
+      ((perfilesRes as any).data || []).forEach((d: any) => docentesMap.set(d.id, d.nombre_completo));
+
+      const mappedAlertas: AlertaEstudiante[] = rawAlertas.map((a: any) => ({
+        ...a,
+        estudiante_nombre: estudiantesMap.get(a.estudiante_id) || 'Estudiante no encontrado',
+        grupo_nombre: gruposMap.get(a.grupo_id) || 'Grupo no especificado',
+        docente_nombre: docentesMap.get(a.docente_id) || 'Docente sin asignar'
+      }));
+
+      const mappedSeguimientos: Seguimiento[] = rawSeguimientos.map((s: any) => ({
+        ...s,
+        estudiante_nombre: estudiantesMap.get(s.estudiante_id) || 'Estudiante no encontrado',
+        docente_nombre: docentesMap.get(s.docente_id) || 'Docente responsable'
+      }));
+
+      downloadAtRiskReport(mappedAlertas, mappedSeguimientos);
+    } catch (err: any) {
+      console.error('Error al generar reporte de estudiantes en riesgo:', err);
+      alert(err.message || 'Error al obtener datos de estudiantes en riesgo.');
+    } finally {
+      setDownloadingRiesgo(false);
+    }
   };
 
   return (
@@ -1913,10 +2046,15 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ user }) => {
               </div>
               <button
                 onClick={handleDownloadRiesgo}
-                className="w-full h-12 bg-[#17324D] hover:bg-slate-900 text-white font-bold text-xs rounded-2xl flex items-center justify-center gap-2"
+                disabled={downloadingRiesgo}
+                className="w-full h-12 bg-[#17324D] hover:bg-slate-900 text-white font-bold text-xs rounded-2xl flex items-center justify-center gap-2 disabled:opacity-60 transition-all"
               >
-                <Download className="w-4 h-4 text-[#FFC845]" />
-                <span>Descargar Reporte de Riesgo y Seguimiento (.xlsx)</span>
+                {downloadingRiesgo ? (
+                  <Loader2 className="w-4 h-4 animate-spin text-[#FFC845]" />
+                ) : (
+                  <Download className="w-4 h-4 text-[#FFC845]" />
+                )}
+                <span>{downloadingRiesgo ? 'Generando Reporte...' : 'Descargar Reporte de Riesgo y Seguimiento (.xlsx)'}</span>
               </button>
             </div>
           </div>

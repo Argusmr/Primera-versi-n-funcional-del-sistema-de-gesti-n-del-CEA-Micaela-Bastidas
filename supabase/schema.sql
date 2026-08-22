@@ -648,3 +648,68 @@ CREATE POLICY "Publicadores suben archivos" ON storage.objects
     bucket_id = 'documentos_institucionales' AND
     public.es_publicador()
   );
+
+-- ============================================================
+-- CONFIGURACIÓN CALENDARIO LABORAL (DÍAS EFECTIVOS)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS public.configuracion_calendario (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  mes TEXT NOT NULL UNIQUE, -- Formato 'YYYY-MM'
+  dias_trabajados INTEGER NOT NULL CHECK (dias_trabajados >= 0 AND dias_trabajados <= 31),
+  observacion TEXT,
+  creado_por UUID REFERENCES public.perfiles(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+ALTER TABLE public.configuracion_calendario ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Todos pueden consultar configuracion_calendario"
+  ON public.configuracion_calendario
+  FOR SELECT
+  TO authenticated
+  USING (true);
+
+CREATE POLICY "Solo superadmin o director puede insertar configuracion_calendario"
+  ON public.configuracion_calendario
+  FOR INSERT
+  TO authenticated
+  WITH CHECK (
+    EXISTS (
+      SELECT 1 FROM public.perfiles
+      WHERE perfiles.id = auth.uid()
+      AND perfiles.rol IN ('superadmin', 'director')
+    )
+  );
+
+CREATE POLICY "Solo superadmin o director puede actualizar configuracion_calendario"
+  ON public.configuracion_calendario
+  FOR UPDATE
+  TO authenticated
+  USING (
+    EXISTS (
+      SELECT 1 FROM public.perfiles
+      WHERE perfiles.id = auth.uid()
+      AND perfiles.rol IN ('superadmin', 'director')
+    )
+  )
+  WITH CHECK (
+    EXISTS (
+      SELECT 1 FROM public.perfiles
+      WHERE perfiles.id = auth.uid()
+      AND perfiles.rol IN ('superadmin', 'director')
+    )
+  );
+
+CREATE POLICY "Solo superadmin o director puede eliminar configuracion_calendario"
+  ON public.configuracion_calendario
+  FOR DELETE
+  TO authenticated
+  USING (
+    EXISTS (
+      SELECT 1 FROM public.perfiles
+      WHERE perfiles.id = auth.uid()
+      AND perfiles.rol IN ('superadmin', 'director')
+    )
+  );
+
