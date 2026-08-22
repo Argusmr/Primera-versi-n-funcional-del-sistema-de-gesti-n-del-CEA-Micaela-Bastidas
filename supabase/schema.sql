@@ -635,6 +635,23 @@ CREATE POLICY "Publicador gestiona publicaciones" ON public.publicaciones
     public.es_publicador()
   );
 
+-- Politicas: Auditoria Institucional
+CREATE POLICY "Superadmin y director consultan auditoria" ON public.auditoria
+  FOR SELECT
+  TO authenticated
+  USING (
+    EXISTS (
+      SELECT 1 FROM public.perfiles
+      WHERE perfiles.id = auth.uid()
+      AND perfiles.rol IN ('superadmin', 'director', 'coordinador')
+    )
+  );
+
+CREATE POLICY "Usuarios autenticados insertan auditoria" ON public.auditoria
+  FOR INSERT
+  TO authenticated
+  WITH CHECK (auth.uid() IS NOT NULL);
+
 -- STORAGE BUCKET setup script for Supabase
 INSERT INTO storage.buckets (id, name, public) 
 VALUES ('documentos_institucionales', 'documentos_institucionales', true)

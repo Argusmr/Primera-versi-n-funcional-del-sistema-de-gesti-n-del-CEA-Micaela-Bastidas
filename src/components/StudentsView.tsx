@@ -16,12 +16,17 @@ import {
   Calendar,
   ChevronDown,
   ChevronUp,
-  RefreshCw
+  RefreshCw,
+  Shield,
+  ShieldAlert,
+  ShieldCheck,
+  FileSignature
 } from 'lucide-react';
 import { Perfil, Estudiante, Grupo, AsistenciaEstudiante } from '../types';
 import { saveOfflineEstudianteAsistencia } from '../lib/db';
 import { downloadStudentEnrollmentReport } from '../lib/excelExport';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { registrarAuditoria } from '../lib/audit';
 
 interface StudentsViewProps {
   user: Perfil;
@@ -83,6 +88,13 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
   const [savedMode, setSavedMode] = useState<'cloud' | 'offline'>('cloud');
   const [savingAttendance, setSavingAttendance] = useState<boolean>(false);
   const [saveAttendanceError, setSaveAttendanceError] = useState<string | null>(null);
+
+  // Audit Confirmation Modal for Director / Superadmin
+  const [showConfirmAuditModal, setShowConfirmAuditModal] = useState<boolean>(false);
+  const [auditMotivoPreset, setAuditMotivoPreset] = useState<string>('Cobertura por ausencia del docente titular');
+  const [auditMotivoPersonalizado, setAuditMotivoPersonalizado] = useState<string>('');
+  const [auditMotivoDetalle, setAuditMotivoDetalle] = useState<string>('');
+  const [lastAuditInfo, setLastAuditInfo] = useState<{ motivo: string; usuario: string; rol: string } | null>(null);
 
   // Student Search
   const [searchTerm, setSearchTerm] = useState<string>('');
@@ -611,8 +623,51 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
     );
   };
 
-  const handleSaveAttendance = async (e: React.FormEvent) => {
+  const handleFormSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!selectedGrupoId) {
+      setSaveAttendanceError('Debe seleccionar un grupo asignado.');
+      return;
+    }
+    if (asistenciaStudents.length === 0) {
+      setSaveAttendanceError('No hay estudiantes en el grupo seleccionado para registrar asistencia.');
+      return;
+    }
+    const materiaTrimmed = materiaClase.trim();
+    if (!materiaTrimmed) {
+      setSaveAttendanceError('Debe especificar la materia o módulo de la sesión de clase.');
+      return;
+    }
+
+    setSaveAttendanceError(null);
+
+    // Si es Director / Superadmin / Coordinador, solicitar confirmación y motivo para auditoría
+    if (isDirectorOrAdmin) {
+      setShowConfirmAuditModal(true);
+    } else {
+      executeSaveAttendance();
+    }
+  };
+
+  const handleConfirmAuditAndSave = () => {
+    let motivoFinal = auditMotivoPreset;
+    if (auditMotivoPreset === 'Otro motivo (especificar)') {
+      if (!auditMotivoPersonalizado.trim()) {
+        setSaveAttendanceError('Debe especificar el motivo del registro institucional.');
+        return;
+      }
+      motivoFinal = auditMotivoPersonalizado.trim();
+    }
+
+    if (auditMotivoDetalle.trim()) {
+      motivoFinal += ` - Detalle: ${auditMotivoDetalle.trim()}`;
+    }
+
+    setShowConfirmAuditModal(false);
+    executeSaveAttendance(motivoFinal);
+  };
+
+  const executeSaveAttendance = async (motivoAuditoria?: string) => {
     if (!selectedGrupoId) {
       setSaveAttendanceError('Debe seleccionar un grupo asignado.');
       return;
@@ -708,7 +763,46 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
           throw asistenciasError;
         }
 
-        // 4. Generación automática de alertas de seguimiento por faltas consecutivas reales
+        // 4. Registro de Auditoría Institucional si el usuario es Director o Superadmin
+        if (isDirectorOrAdmin) {
+          const selectedGroupObj = assignedGroups.find(g => g.id === selectedGrupoId);
+          const pCount = items.filter(i => i.estado === 'presente').length;
+          const aCount = items.filter(i => i.estado === 'atraso').length;
+          const fCount = items.filter(i => i.estado === 'falta').length;
+          const lCount = items.filter(i => i.estado === 'licencia').length;
+          const finalMotivo = motivoAuditoria || 'Registro de cobertura institucional por Dirección';
+
+          await registrarAuditoria({
+            usuario_id: user.id,
+            usuario_nombre: user.nombre_completo,
+            usuario_rol: user.rol,
+            accion: 'cobertura_institucional_asistencia',
+            tabla_afectada: 'sesiones_clase',
+            registro_afectado_id: sesionId,
+            valor_nuevo: {
+              grupo_id: selectedGrupoId,
+              grupo_nombre: selectedGroupObj?.nombre || 'Grupo',
+              fecha: fechaClase,
+              materia: materiaTrimmed,
+              rol_usuario: user.rol,
+              motivo: finalMotivo,
+              total_estudiantes: items.length,
+              presentes: pCount,
+              atrasos: aCount,
+              faltas: fCount,
+              licencias: lCount
+            },
+            motivo_registro: finalMotivo
+          });
+
+          setLastAuditInfo({
+            motivo: finalMotivo,
+            usuario: user.nombre_completo,
+            rol: user.rol
+          });
+        }
+
+        // 5. Generación automática de alertas de seguimiento por faltas consecutivas reales
         try {
           const faltasItems = items.filter(item => item.estado === 'falta');
           if (faltasItems.length > 0) {
@@ -834,6 +928,32 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
               timestamp: Date.now()
             });
 
+            if (isDirectorOrAdmin) {
+              const finalMotivo = motivoAuditoria || 'Registro de cobertura institucional por Dirección';
+              await registrarAuditoria({
+                usuario_id: user.id,
+                usuario_nombre: user.nombre_completo,
+                usuario_rol: user.rol,
+                accion: 'cobertura_institucional_asistencia',
+                tabla_afectada: 'sesiones_clase',
+                registro_afectado_id: syncKey,
+                valor_nuevo: {
+                  grupo_id: selectedGrupoId,
+                  fecha: fechaClase,
+                  materia: materiaTrimmed,
+                  rol_usuario: user.rol,
+                  motivo: finalMotivo,
+                  offline: true
+                },
+                motivo_registro: finalMotivo
+              });
+              setLastAuditInfo({
+                motivo: finalMotivo,
+                usuario: user.nombre_completo,
+                rol: user.rol
+              });
+            }
+
             const presentesOatrasos = items.filter(i => i.estado === 'presente' || i.estado === 'atraso').length;
             const totalGroup = Math.max(1, items.length);
             const percent = Math.round((presentesOatrasos / totalGroup) * 100);
@@ -872,6 +992,32 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
         asistencias: items,
         timestamp: Date.now()
       });
+
+      if (isDirectorOrAdmin) {
+        const finalMotivo = motivoAuditoria || 'Registro de cobertura institucional por Dirección';
+        await registrarAuditoria({
+          usuario_id: user.id,
+          usuario_nombre: user.nombre_completo,
+          usuario_rol: user.rol,
+          accion: 'cobertura_institucional_asistencia',
+          tabla_afectada: 'sesiones_clase',
+          registro_afectado_id: syncKey,
+          valor_nuevo: {
+            grupo_id: selectedGrupoId,
+            fecha: fechaClase,
+            materia: materiaTrimmed,
+            rol_usuario: user.rol,
+            motivo: finalMotivo,
+            local: true
+          },
+          motivo_registro: finalMotivo
+        });
+        setLastAuditInfo({
+          motivo: finalMotivo,
+          usuario: user.nombre_completo,
+          rol: user.rol
+        });
+      }
 
       const presentesOatrasos = items.filter(i => i.estado === 'presente' || i.estado === 'atraso').length;
       const totalGroup = Math.max(1, items.length);
@@ -977,16 +1123,50 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
           {/* Form & Group Selector when assigned groups exist */}
           {!loadingGrupos && !gruposError && assignedGroups.length > 0 && (
             <div className="space-y-4">
+              {/* Institutional Coverage Banner for Director/Admin */}
+              {isDirectorOrAdmin && (
+                <div className="p-3.5 bg-amber-50 border border-amber-200 rounded-2xl flex items-center justify-between gap-2 shadow-xs">
+                  <div className="flex items-center gap-2.5">
+                    <ShieldAlert className="w-5 h-5 text-amber-600 shrink-0" />
+                    <div>
+                      <span className="text-xs font-extrabold text-amber-950 block">Modo Cobertura Institucional</span>
+                      <span className="text-[11px] text-amber-800 font-medium">
+                        Registrado por: <strong>{user.nombre_completo}</strong> ({user.rol}). Los registros de cobertura quedan respaldados en auditoría.
+                      </span>
+                    </div>
+                  </div>
+                  <span className="px-2.5 py-1 bg-amber-200/80 text-amber-900 rounded-lg text-[10px] font-extrabold shrink-0 uppercase tracking-wider">
+                    Auditoría
+                  </span>
+                </div>
+              )}
+
               <div className="bg-white rounded-3xl p-5 shadow-xs border border-slate-200 space-y-4">
-                <h3 className="font-extrabold text-[#17324D] text-lg flex items-center gap-2">
-                  <UserCheck className="w-6 h-6 text-[#00A651]" />
-                  Registro de Asistencia Estudiantil
-                </h3>
+                <div className="flex items-center justify-between">
+                  <h3 className="font-extrabold text-[#17324D] text-lg flex items-center gap-2">
+                    {isDirectorOrAdmin ? (
+                      <>
+                        <ShieldCheck className="w-6 h-6 text-amber-600" />
+                        Registro de Cobertura Institucional
+                      </>
+                    ) : (
+                      <>
+                        <UserCheck className="w-6 h-6 text-[#00A651]" />
+                        Registro de Asistencia Estudiantil
+                      </>
+                    )}
+                  </h3>
+                  <span className="text-xs text-slate-500 font-medium">
+                    {isDirectorOrAdmin ? 'Toma de asistencia institucional' : 'Control de asistencia docente'}
+                  </span>
+                </div>
 
                 {/* Select Group, Date & Subject */}
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs font-bold">
                   <div>
-                    <label className="block text-slate-700 mb-1">Grupo / Curso a cargo</label>
+                    <label className="block text-slate-700 mb-1">
+                      {isDirectorOrAdmin ? 'Grupo / Curso institucional' : 'Grupo / Curso a cargo'}
+                    </label>
                     <select
                       value={selectedGrupoId}
                       onChange={e => {
@@ -1087,7 +1267,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
                   />
                   <h4 className="font-extrabold text-lg">
                     {savedMode === 'cloud'
-                      ? '¡Asistencia guardada en Supabase!'
+                      ? (isDirectorOrAdmin ? '¡Cobertura institucional guardada y registrada en auditoría!' : '¡Asistencia guardada en Supabase!')
                       : 'Sin conexión. Asistencia guardada localmente y pendiente de sincronización.'}
                   </h4>
                   <p
@@ -1097,11 +1277,17 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
                   >
                     Porcentaje de asistencia del grupo: <strong className="text-base font-extrabold">{savedGroupPercent}%</strong>
                   </p>
+                  {isDirectorOrAdmin && lastAuditInfo && (
+                    <div className="p-2.5 bg-white/80 rounded-xl border border-emerald-200 text-[11px] text-emerald-900 max-w-md mx-auto text-left">
+                      <p><strong>Registrado por:</strong> {lastAuditInfo.usuario} ({lastAuditInfo.rol})</p>
+                      <p><strong>Motivo en Auditoría:</strong> {lastAuditInfo.motivo}</p>
+                    </div>
+                  )}
                   <button
                     onClick={() => setAttendanceSaved(false)}
                     className={`px-5 py-2.5 text-white font-bold text-xs rounded-xl mt-2 transition-colors inline-flex items-center gap-1.5 shadow-xs ${
                       savedMode === 'cloud'
-                        ? 'bg-[#00A651] hover:bg-[#008d44]'
+                        ? (isDirectorOrAdmin ? 'bg-[#17324D] hover:bg-[#0e2338]' : 'bg-[#00A651] hover:bg-[#008d44]')
                         : 'bg-amber-600 hover:bg-amber-700'
                     }`}
                   >
@@ -1112,7 +1298,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
 
               {/* Student List & Attendance Toggles */}
               {!loadingStudents && !studentsError && asistenciaStudents.length > 0 && !attendanceSaved && (
-                <form onSubmit={handleSaveAttendance} className="space-y-3">
+                <form onSubmit={handleFormSubmit} className="space-y-3">
                   {asistenciaStudents.map((st) => {
                     const currentStatus = attendanceMap[st.id] || 'presente';
                     return (
@@ -1198,12 +1384,21 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
                     type="submit"
                     id="btn-guardar-asistencia-est"
                     disabled={savingAttendance}
-                    className="w-full h-14 bg-[#00A651] hover:bg-[#008f45] disabled:opacity-60 text-white font-extrabold text-lg rounded-2xl shadow-md flex items-center justify-center gap-2 transition-colors cursor-pointer disabled:cursor-not-allowed"
+                    className={`w-full h-14 disabled:opacity-60 text-white font-extrabold text-lg rounded-2xl shadow-md flex items-center justify-center gap-2 transition-colors cursor-pointer disabled:cursor-not-allowed ${
+                      isDirectorOrAdmin
+                        ? 'bg-[#17324D] hover:bg-[#0f2438] border-2 border-amber-400/40'
+                        : 'bg-[#00A651] hover:bg-[#008f45]'
+                    }`}
                   >
                     {savingAttendance ? (
                       <>
                         <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
                         <span>GUARDANDO EN SUPABASE...</span>
+                      </>
+                    ) : isDirectorOrAdmin ? (
+                      <>
+                        <FileSignature className="w-5 h-5 text-amber-400" />
+                        <span>REGISTRO DE COBERTURA INSTITUCIONAL</span>
                       </>
                     ) : (
                       <span>GUARDAR ASISTENCIA DEL GRUPO</span>
@@ -1487,6 +1682,131 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
               })}
             </div>
           )}
+        </div>
+      )}
+      {/* ================= MODAL DE CONFIRMACIÓN DE AUDITORÍA INSTITUCIONAL ================= */}
+      {showConfirmAuditModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-lg w-full border border-amber-200 shadow-2xl p-6 space-y-4 animate-in fade-in zoom-in-95 duration-200">
+            {/* Header */}
+            <div className="flex items-center gap-3 border-b border-slate-100 pb-3">
+              <div className="p-2.5 bg-amber-100 rounded-2xl text-amber-700">
+                <ShieldAlert className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="font-extrabold text-base text-[#17324D]">
+                  Confirmación de Cobertura Institucional
+                </h3>
+                <p className="text-xs text-slate-500 font-medium">
+                  Registro oficial por Dirección / Superadmin
+                </p>
+              </div>
+            </div>
+
+            {/* Mandatory Alert Callout */}
+            <div className="p-4 bg-amber-50 rounded-2xl border border-amber-300 text-amber-950 space-y-1">
+              <p className="text-sm font-extrabold text-amber-900 leading-snug">
+                Esta asistencia será registrada por el Director y quedará en auditoría.
+              </p>
+              <p className="text-xs font-medium text-amber-800">
+                Quedará registrado el usuario responsable, fecha, hora, grupo y motivo del registro para control y trazabilidad administrativa.
+              </p>
+            </div>
+
+            {/* Resumen de la sesión */}
+            <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-200 text-xs space-y-1.5 text-slate-700 font-medium">
+              <div className="flex justify-between">
+                <span className="text-slate-500">Usuario Responsable:</span>
+                <strong className="text-slate-900">{user.nombre_completo} ({user.rol})</strong>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Grupo / Materia:</span>
+                <strong className="text-slate-900">
+                  {assignedGroups.find(g => g.id === selectedGrupoId)?.nombre || 'Grupo'} · {materiaClase}
+                </strong>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Fecha de la clase:</span>
+                <strong className="text-slate-900">{fechaClase}</strong>
+              </div>
+              <div className="pt-2 border-t border-slate-200 grid grid-cols-4 gap-1 text-center font-bold text-[11px]">
+                <div className="text-emerald-700 bg-emerald-50 py-1 rounded-lg">
+                  Pres: {asistenciaStudents.filter(st => (attendanceMap[st.id] || 'presente') === 'presente').length}
+                </div>
+                <div className="text-amber-700 bg-amber-50 py-1 rounded-lg">
+                  Atr: {asistenciaStudents.filter(st => attendanceMap[st.id] === 'atraso').length}
+                </div>
+                <div className="text-red-700 bg-red-50 py-1 rounded-lg">
+                  Falt: {asistenciaStudents.filter(st => attendanceMap[st.id] === 'falta').length}
+                </div>
+                <div className="text-blue-700 bg-blue-50 py-1 rounded-lg">
+                  Lic: {asistenciaStudents.filter(st => attendanceMap[st.id] === 'licencia').length}
+                </div>
+              </div>
+            </div>
+
+            {/* Selector de Motivo Institucional */}
+            <div className="space-y-2">
+              <label className="block text-xs font-bold text-slate-700">
+                Motivo del Registro / Cobertura <span className="text-red-500">*</span>
+              </label>
+              <select
+                value={auditMotivoPreset}
+                onChange={e => setAuditMotivoPreset(e.target.value)}
+                className="w-full h-10 px-3 bg-slate-50 border border-slate-300 rounded-xl text-xs font-medium outline-none"
+              >
+                <option value="Cobertura por ausencia del docente titular">
+                  Cobertura por ausencia del docente titular
+                </option>
+                <option value="Supervisión institucional y control pedagógico">
+                  Supervisión institucional y control pedagógico
+                </option>
+                <option value="Apoyo temporal en jornada académica">
+                  Apoyo temporal en jornada académica
+                </option>
+                <option value="Otro motivo (especificar)">
+                  Otro motivo (especificar)
+                </option>
+              </select>
+
+              {auditMotivoPreset === 'Otro motivo (especificar)' && (
+                <input
+                  type="text"
+                  placeholder="Escriba el motivo específico..."
+                  value={auditMotivoPersonalizado}
+                  onChange={e => setAuditMotivoPersonalizado(e.target.value)}
+                  className="w-full h-10 px-3 bg-slate-50 border border-amber-300 rounded-xl text-xs font-medium outline-none"
+                />
+              )}
+
+              <textarea
+                placeholder="Observación o nota adicional para el libro de auditoría (opcional)..."
+                value={auditMotivoDetalle}
+                onChange={e => setAuditMotivoDetalle(e.target.value)}
+                rows={2}
+                className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium outline-none resize-none"
+              />
+            </div>
+
+            {/* Botones de acción */}
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setShowConfirmAuditModal(false)}
+                className="px-4 py-2.5 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 font-bold text-xs transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmAuditAndSave}
+                className="px-5 py-2.5 rounded-xl bg-[#17324D] hover:bg-[#0f2438] text-white font-extrabold text-xs transition-colors flex items-center gap-1.5 shadow-sm"
+              >
+                <ShieldCheck className="w-4 h-4 text-amber-400" />
+                <span>Confirmar y Guardar en Auditoría</span>
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
