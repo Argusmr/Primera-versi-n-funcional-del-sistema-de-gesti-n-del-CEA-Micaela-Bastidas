@@ -1,6 +1,8 @@
 import {
   Perfil,
   Programa,
+  Subprograma,
+  CarreraTecnica,
   Sede,
   Horario,
   Grupo,
@@ -19,21 +21,70 @@ export const INITIAL_PROGRAMAS: Programa[] = [
     id: 'prog-1',
     codigo: 'EPJA',
     nombre: 'Educación de Personas Jóvenes y Adultas',
-    descripcion: 'Formación humanística y técnica para jóvenes y adultos de la comunidad.',
+    descripcion: 'Formación humanística integral para jóvenes y adultos (EPA y ESA).',
     activo: true,
   },
   {
     id: 'prog-2',
-    codigo: 'EDUPER',
-    nombre: 'Educación Permanente',
-    descripcion: 'Capacitación comunitaria no formal y talleres continuos.',
+    codigo: 'ETA',
+    nombre: 'Educación Técnica Alternativa',
+    descripcion: 'Formación técnica y tecnológica en carreras técnicas (Técnico Básico, Auxiliar y Medio).',
     activo: true,
   },
   {
     id: 'prog-3',
+    codigo: 'EDUPER',
+    nombre: 'Educación Permanente',
+    descripcion: 'Cursos, talleres y procesos formativos comunitarios no escolarizados.',
+    activo: true,
+  },
+  {
+    id: 'prog-4',
     codigo: 'CEE',
     nombre: 'Educación Especial',
-    descripcion: 'Atención inclusiva a personas con necesidades educativas especiales.',
+    descripcion: 'Atención inclusiva integral a personas con necesidades educativas especiales.',
+    activo: true,
+  },
+];
+
+export const INITIAL_SUBPROGRAMAS: Subprograma[] = [
+  {
+    id: 'subprog-epa',
+    programa_id: 'prog-1',
+    programa_codigo: 'EPJA',
+    codigo: 'EPA',
+    nombre: 'Educación Primaria de Personas Jóvenes y Adultas',
+    descripcion: 'Comprende Aprendizajes Elementales y Aprendizajes Avanzados.',
+    activo: true,
+  },
+  {
+    id: 'subprog-esa',
+    programa_id: 'prog-1',
+    programa_codigo: 'EPJA',
+    codigo: 'ESA',
+    nombre: 'Educación Secundaria de Adultos',
+    descripcion: 'Comprende Aprendizajes Aplicados, Complementarios y Especializados.',
+    activo: true,
+  },
+];
+
+export const INITIAL_CARRERAS: CarreraTecnica[] = [
+  {
+    id: 'carr-sistemas',
+    programa_id: 'prog-2',
+    programa_codigo: 'ETA',
+    codigo: 'SIS',
+    nombre: 'Sistemas Informáticos',
+    descripcion: 'Carrera técnica en computación, redes y desarrollo de software.',
+    activo: true,
+  },
+  {
+    id: 'carr-gastronomia',
+    programa_id: 'prog-2',
+    programa_codigo: 'ETA',
+    codigo: 'GAS',
+    nombre: 'Gastronomía',
+    descripcion: 'Carrera técnica en arte culinario, nutrición y repostería.',
     activo: true,
   },
 ];

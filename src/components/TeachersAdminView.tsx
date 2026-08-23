@@ -1,11 +1,34 @@
 import React, { useState, useEffect } from 'react';
-import { UserCheck, Shield, Key, Edit, Trash2, Plus, Power, CheckCircle2, AlertTriangle, FileSpreadsheet, FileCheck, Search, Filter } from 'lucide-react';
-import { Perfil, Sede, Horario, Programa, ControlDocumental } from '../types';
+import {
+  UserCheck,
+  Shield,
+  Key,
+  Edit,
+  Trash2,
+  Plus,
+  Power,
+  CheckCircle2,
+  AlertTriangle,
+  FileSpreadsheet,
+  FileCheck,
+  Search,
+  Filter,
+  Eye,
+  Layers,
+  ArrowRight,
+  MapPin,
+  Clock,
+  BookOpen
+} from 'lucide-react';
+import { Perfil, Sede, Horario, Programa, ControlDocumental, AsignacionDocente } from '../types';
 import { MOCK_DOCENTES, INITIAL_SEDES, INITIAL_HORARIOS, INITIAL_PROGRAMAS } from '../lib/mockData';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { EditTeacherModal } from './EditTeacherModal';
 import { EditControlDocumentalModal } from './EditControlDocumentalModal';
+import { TeacherDetailModal } from './TeacherDetailModal';
+import { TeacherAssignmentsModal } from './TeacherAssignmentsModal';
 import { getLocalControlDocumentalMap, getControlDocumentalForDocente, calculateEstadoControl } from '../lib/controlDocumental';
+import { loadAllActiveAsignaciones, getLocalAsignaciones } from '../lib/teacherAssignments';
 
 interface TeachersAdminViewProps {
   user: Perfil;
@@ -26,7 +49,14 @@ export const TeachersAdminView: React.FC<TeachersAdminViewProps> = ({
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [docFilterStatus, setDocFilterStatus] = useState<'todos' | 'presentados' | 'pendientes'>('todos');
   const [actionMsg, setActionMsg] = useState<string | null>(null);
+
+  // Modals state
   const [editingTeacher, setEditingTeacher] = useState<Perfil | null>(null);
+  const [viewingTeacher, setViewingTeacher] = useState<Perfil | null>(null);
+  const [managingAssignmentsTeacher, setManagingAssignmentsTeacher] = useState<Perfil | null>(null);
+
+  // Assignments Map per Docente
+  const [assignmentsMap, setAssignmentsMap] = useState<Record<string, AsignacionDocente[]>>({});
 
   // Control Documental State Map
   const [controlMap, setControlMap] = useState<Record<string, ControlDocumental>>({});
@@ -66,15 +96,37 @@ export const TeachersAdminView: React.FC<TeachersAdminViewProps> = ({
     }
   };
 
+  const fetchAssignments = async () => {
+    try {
+      const allAsigs = await loadAllActiveAsignaciones();
+      const grouped: Record<string, AsignacionDocente[]> = {};
+      allAsigs.forEach(asig => {
+        if (!grouped[asig.docente_id]) {
+          grouped[asig.docente_id] = [];
+        }
+        grouped[asig.docente_id].push(asig);
+      });
+      setAssignmentsMap(grouped);
+    } catch (e) {
+      console.warn('Error al cargar asignaciones docentes:', e);
+    }
+  };
+
   useEffect(() => {
     fetchDocentes();
+    fetchAssignments();
 
     const handleRefetch = () => {
       fetchDocentes();
+      fetchAssignments();
     };
+
     window.addEventListener('docente-added', handleRefetch);
+    window.addEventListener('asignaciones-docentes-changed', handleRefetch);
+
     return () => {
       window.removeEventListener('docente-added', handleRefetch);
+      window.removeEventListener('asignaciones-docentes-changed', handleRefetch);
     };
   }, []);
 
@@ -107,7 +159,8 @@ export const TeachersAdminView: React.FC<TeachersAdminViewProps> = ({
   const filtered = docentes.filter(d => {
     const matchesSearch =
       d.nombre_completo.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (d.rda && d.rda.includes(searchTerm));
+      (d.rda && d.rda.includes(searchTerm)) ||
+      (d.especialidad && d.especialidad.toLowerCase().includes(searchTerm.toLowerCase()));
 
     const ctrl = controlMap[d.id];
     const isPresentado = ctrl
@@ -198,12 +251,12 @@ export const TeachersAdminView: React.FC<TeachersAdminViewProps> = ({
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-xl font-extrabold text-[#17324D]">Gestión de Personal Docente</h2>
-          <p className="text-xs text-slate-500 font-medium">Asignación de sedes, horarios, permisos y control documental</p>
+          <p className="text-xs text-slate-500 font-medium">Asignaciones académicas, sedes, horarios y control documental</p>
         </div>
         <button
           onClick={onOpenAddTeacherModal}
           id="btn-add-teacher"
-          className="h-10 px-3 bg-[#00A651] text-white font-bold text-xs rounded-xl flex items-center gap-1 shadow-sm"
+          className="h-10 px-3 bg-[#00A651] hover:bg-[#008f45] text-white font-bold text-xs rounded-xl flex items-center gap-1 shadow-sm transition-all"
         >
           <Plus className="w-4 h-4 text-[#FFC845]" />
           <span>+ Docente</span>
@@ -268,7 +321,7 @@ export const TeachersAdminView: React.FC<TeachersAdminViewProps> = ({
             <Search className="w-4 h-4 absolute left-3 top-3 text-slate-400" />
             <input
               type="text"
-              placeholder="Buscar docente por nombre o RDA..."
+              placeholder="Buscar docente por nombre, especialidad o RDA..."
               value={searchTerm}
               onChange={e => setSearchTerm(e.target.value)}
               className="w-full h-10 pl-9 pr-3 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-900 outline-none focus:border-[#00A651]"
@@ -318,8 +371,12 @@ export const TeachersAdminView: React.FC<TeachersAdminViewProps> = ({
             ? calculateEstadoControl(ctrl.tiene_plan_modular, ctrl.tiene_planificacion_curricular) === 'presentado'
             : false;
 
+          const docAssignments = assignmentsMap[doc.id] || [];
+          const activeAssignments = docAssignments.filter(a => a.activo !== false && a.estado !== 'inactivo');
+
           return (
             <div key={doc.id} className="p-5 bg-white rounded-3xl border border-slate-200 shadow-xs space-y-3">
+              {/* Header Info */}
               <div className="flex items-start justify-between gap-2">
                 <div>
                   <div className="flex items-center gap-2 flex-wrap">
@@ -336,33 +393,96 @@ export const TeachersAdminView: React.FC<TeachersAdminViewProps> = ({
                     )}
                   </div>
                   <p className="text-xs text-slate-500 font-medium mt-0.5">
-                    RDA: {doc.rda || 'N/D'} • Especialidad: {doc.especialidad || 'General'}
+                    RDA: <strong className="text-slate-800">{doc.rda || 'N/D'}</strong> • CI: <strong className="text-slate-800">{doc.ci || 'N/D'}</strong> • Especialidad: <strong className="text-slate-800">{doc.especialidad || 'General'}</strong>
                   </p>
-                  {doc.materias && doc.materias.length > 0 && (
-                    <p className="text-[11px] text-emerald-800 font-medium mt-1">
-                      Materias: {doc.materias.join(', ')}
-                    </p>
-                  )}
                 </div>
 
-                <div className="flex flex-col items-end gap-2 shrink-0">
+                <span
+                  className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase shrink-0 ${
+                    doc.activo ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'
+                  }`}
+                >
+                  {doc.activo ? 'Activo' : 'Desactivado'}
+                </span>
+              </div>
+
+              {/* THREE MAIN ACTIONS REQUIRED: 1. Ver docente, 2. Editar docente, 3. Gestionar asignaciones */}
+              <div className="grid grid-cols-3 gap-2 pt-1 pb-1">
+                {/* 1. Ver docente */}
+                <button
+                  type="button"
+                  onClick={() => setViewingTeacher(doc)}
+                  className="h-9 px-2 bg-slate-50 hover:bg-slate-100 text-slate-800 border border-slate-200 rounded-xl font-extrabold text-[11px] flex items-center justify-center gap-1.5 transition-all"
+                  title="Ver perfil completo del docente"
+                >
+                  <Eye className="w-3.5 h-3.5 text-slate-600" />
+                  <span>Ver Docente</span>
+                </button>
+
+                {/* 2. Editar docente */}
+                <button
+                  type="button"
+                  onClick={() => setEditingTeacher(doc)}
+                  className="h-9 px-2 bg-slate-50 hover:bg-slate-100 text-slate-800 border border-slate-200 rounded-xl font-extrabold text-[11px] flex items-center justify-center gap-1.5 transition-all"
+                  title="Editar datos personales e institucionales"
+                >
+                  <Edit className="w-3.5 h-3.5 text-[#00A651]" />
+                  <span>Editar Docente</span>
+                </button>
+
+                {/* 3. Gestionar asignaciones académicas */}
+                <button
+                  type="button"
+                  onClick={() => setManagingAssignmentsTeacher(doc)}
+                  className="h-9 px-2 bg-emerald-50 hover:bg-emerald-100 text-[#00A651] border border-emerald-200 rounded-xl font-extrabold text-[11px] flex items-center justify-center gap-1.5 transition-all"
+                  title="Gestionar asignaciones académicas, materias y grupos"
+                >
+                  <Layers className="w-3.5 h-3.5 text-[#00A651]" />
+                  <span>Asignaciones</span>
+                </button>
+              </div>
+
+              {/* Asignaciones Académicas Vigentes Preview Badge */}
+              <div className="p-3 bg-slate-50/90 rounded-2xl border border-slate-200 space-y-1.5 text-xs">
+                <div className="flex items-center justify-between">
+                  <span className="font-extrabold text-[#17324D] text-[11px] flex items-center gap-1.5">
+                    <BookOpen className="w-3.5 h-3.5 text-[#00A651]" />
+                    Asignaciones Curriculares Vigentes:
+                  </span>
                   <span
-                    className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase ${
-                      doc.activo ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'
+                    className={`text-[10px] font-black px-2 py-0.2 rounded-full ${
+                      activeAssignments.length > 0
+                        ? 'bg-emerald-100 text-emerald-900 border border-emerald-200'
+                        : 'bg-amber-100 text-amber-900 border border-amber-200'
                     }`}
                   >
-                    {doc.activo ? 'Activo' : 'Desactivado'}
+                    {activeAssignments.length} asignación(es) activa(s)
                   </span>
-
-                  <button
-                    onClick={() => setEditingTeacher(doc)}
-                    className="h-8 px-3 bg-emerald-50 hover:bg-emerald-100 text-[#00A651] border border-emerald-200 rounded-xl font-bold text-xs flex items-center gap-1 transition-all"
-                    title="Editar datos del docente"
-                  >
-                    <Edit className="w-3.5 h-3.5 text-[#00A651]" />
-                    <span>Editar</span>
-                  </button>
                 </div>
+
+                {activeAssignments.length === 0 ? (
+                  <p className="text-[11px] text-amber-800 font-medium">
+                    Sin asignaciones activas registradas. Haga clic en <strong>"Asignaciones"</strong> para asignar grupos.
+                  </p>
+                ) : (
+                  <div className="flex flex-wrap gap-1.5 pt-0.5">
+                    {activeAssignments.map(asig => (
+                      <span
+                        key={asig.id}
+                        className="inline-flex items-center gap-1 bg-white border border-slate-200 rounded-lg px-2 py-1 text-[10px] font-bold text-slate-800 shadow-2xs"
+                      >
+                        <span
+                          className={`w-1.5 h-1.5 rounded-full ${
+                            asig.programa_codigo === 'ETA' ? 'bg-[#00A651]' : 'bg-blue-600'
+                          }`}
+                        />
+                        <span>
+                          {asig.carrera_nombre || asig.etapa_nombre}: <strong>{asig.materia}</strong> ({asig.nivel_nombre || asig.etapa_nombre})
+                        </span>
+                      </span>
+                    ))}
+                  </div>
+                )}
               </div>
 
               {/* Recuadro de Control Documental per Teacher */}
@@ -421,7 +541,7 @@ export const TeachersAdminView: React.FC<TeachersAdminViewProps> = ({
               </div>
 
               <div className="pt-1 text-xs space-y-1 text-slate-600 font-medium">
-                <p>Sede: <strong className="text-slate-900">{doc.sede_nombre || 'Sede Poroma'}</strong></p>
+                <p>Sede Habitual: <strong className="text-slate-900">{doc.sede_nombre || 'Sede Poroma'}</strong></p>
                 <p>Horario: <strong className="text-slate-900">{doc.horario_nombre || 'Poroma Habitual (18:30)'}</strong></p>
                 <p>Permiso de Publicación: <strong className={doc.puede_publicar ? 'text-[#00A651]' : 'text-slate-500'}>{doc.puede_publicar ? 'SI (Autorizado)' : 'NO (Solo lectura)'}</strong></p>
               </div>
@@ -455,6 +575,27 @@ export const TeachersAdminView: React.FC<TeachersAdminViewProps> = ({
         })}
       </div>
 
+      {/* Modal 1: Ver Docente (Perfil y Asignaciones) */}
+      {viewingTeacher && (
+        <TeacherDetailModal
+          docente={viewingTeacher}
+          asignaciones={assignmentsMap[viewingTeacher.id] || []}
+          controlDoc={controlMap[viewingTeacher.id]}
+          onClose={() => setViewingTeacher(null)}
+          onEditTeacher={() => {
+            const t = viewingTeacher;
+            setViewingTeacher(null);
+            setEditingTeacher(t);
+          }}
+          onManageAssignments={() => {
+            const t = viewingTeacher;
+            setViewingTeacher(null);
+            setManagingAssignmentsTeacher(t);
+          }}
+        />
+      )}
+
+      {/* Modal 2: Editar Docente */}
       {editingTeacher && (
         <EditTeacherModal
           docente={editingTeacher}
@@ -463,6 +604,19 @@ export const TeachersAdminView: React.FC<TeachersAdminViewProps> = ({
         />
       )}
 
+      {/* Modal 3: Gestionar Asignaciones Académicas */}
+      {managingAssignmentsTeacher && (
+        <TeacherAssignmentsModal
+          docente={managingAssignmentsTeacher}
+          currentUser={user}
+          onClose={() => setManagingAssignmentsTeacher(null)}
+          onAssignmentsUpdated={() => {
+            fetchAssignments();
+          }}
+        />
+      )}
+
+      {/* Modal 4: Control Documental */}
       {editingControlDocente && (
         <EditControlDocumentalModal
           docente={editingControlDocente}
@@ -475,4 +629,5 @@ export const TeachersAdminView: React.FC<TeachersAdminViewProps> = ({
     </div>
   );
 };
+
 

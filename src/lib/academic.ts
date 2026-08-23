@@ -1,91 +1,208 @@
-import { Programa, Etapa, NivelEducativo, Estudiante } from '../types';
-import { INITIAL_PROGRAMAS, MOCK_ESTUDIANTES } from './mockData';
-import { supabase, isSupabaseConfigured, checkIsOnline } from './supabase';
+import { Programa, Subprograma, CarreraTecnica, Etapa, NivelEducativo, Estudiante } from '../types';
+import { INITIAL_PROGRAMAS, INITIAL_SUBPROGRAMAS, INITIAL_CARRERAS, MOCK_ESTUDIANTES } from './mockData';
+import { supabase, isSupabaseConfigured } from './supabase';
 
 export const INITIAL_ETAPAS: Etapa[] = [
+  // EPA: Educación Primaria de Personas Jóvenes y Adultas (Solamente Elementales y Avanzados)
   {
-    id: 'etapa-1',
+    id: 'etapa-epa-1',
     nombre: 'Aprendizajes Elementales',
-    programa_codigo: 'EPA',
-    descripcion: 'Alfabetización inicial y consolidación de competencias básicas.',
+    programa_codigo: 'EPJA',
+    subprograma_codigo: 'EPA',
+    descripcion: 'Alfabetización inicial y competencias básicas de primaria.',
     activo: true,
   },
   {
-    id: 'etapa-2',
+    id: 'etapa-epa-2',
     nombre: 'Aprendizajes Avanzados',
-    programa_codigo: 'EPA',
-    descripcion: 'Profundización primaria humanística.',
+    programa_codigo: 'EPJA',
+    subprograma_codigo: 'EPA',
+    descripcion: 'Consolidación de conocimientos y culminación del nivel primario.',
+    activo: true,
+  },
+  // ESA: Educación Secundaria de Adultos (Aplicados, Complementarios y Especializados)
+  {
+    id: 'etapa-esa-1',
+    nombre: 'Aprendizajes Aplicados',
+    programa_codigo: 'EPJA',
+    subprograma_codigo: 'ESA',
+    descripcion: 'Primer ciclo de educación secundaria humanística para jóvenes y adultos.',
     activo: true,
   },
   {
-    id: 'etapa-3',
-    nombre: 'Secundaria Etapa Aplicada',
-    programa_codigo: 'ESA',
-    descripcion: 'Formación secundaria orientada al trabajo y bachillerato.',
+    id: 'etapa-esa-2',
+    nombre: 'Aprendizajes Complementarios',
+    programa_codigo: 'EPJA',
+    subprograma_codigo: 'ESA',
+    descripcion: 'Segundo ciclo secundario con énfasis en formación sociocomunitaria.',
     activo: true,
   },
   {
-    id: 'etapa-4',
-    nombre: 'Formación Técnica Tecnológica',
-    programa_codigo: 'ETA',
-    descripcion: 'Especialidades técnicas en niveles Básico, Auxiliar y Medio.',
-    activo: true,
-  },
-  {
-    id: 'etapa-5',
-    nombre: 'Talleres Comunitarios',
-    programa_codigo: 'EDUPER',
-    descripcion: 'Capacitación no formal de corta duración.',
+    id: 'etapa-esa-3',
+    nombre: 'Aprendizajes Especializados',
+    programa_codigo: 'EPJA',
+    subprograma_codigo: 'ESA',
+    descripcion: 'Tercer ciclo secundario habilitante para el bachillerato.',
     activo: true,
   },
 ];
 
 export const INITIAL_NIVELES: NivelEducativo[] = [
+  // Niveles EPA
   {
-    id: 'niv-1',
-    nombre: 'Elemental',
+    id: 'niv-epa-1',
+    nombre: 'Aprendizajes Elementales',
     etapa_nombre: 'Aprendizajes Elementales',
-    programa_codigo: 'EPA',
-    descripcion: 'Nivel básico de primaria o inicio.',
+    programa_codigo: 'EPJA',
+    subprograma_codigo: 'EPA',
+    orden: 1,
+    descripcion: 'Ciclo inicial de alfabetización y educación primaria de adultos.',
     activo: true,
   },
   {
-    id: 'niv-2',
-    nombre: 'Avanzado',
+    id: 'niv-epa-2',
+    nombre: 'Aprendizajes Avanzados',
     etapa_nombre: 'Aprendizajes Avanzados',
-    programa_codigo: 'EPA',
-    descripcion: 'Nivel avanzado primaria o secundaria.',
+    programa_codigo: 'EPJA',
+    subprograma_codigo: 'EPA',
+    orden: 2,
+    descripcion: 'Ciclo avanzado de educación primaria de adultos.',
+    activo: true,
+  },
+  // Niveles ESA
+  {
+    id: 'niv-esa-1',
+    nombre: 'Aprendizajes Aplicados',
+    etapa_nombre: 'Aprendizajes Aplicados',
+    programa_codigo: 'EPJA',
+    subprograma_codigo: 'ESA',
+    orden: 1,
+    descripcion: 'Primer ciclo de secundaria humanística de adultos.',
     activo: true,
   },
   {
-    id: 'niv-3',
+    id: 'niv-esa-2',
+    nombre: 'Aprendizajes Complementarios',
+    etapa_nombre: 'Aprendizajes Complementarios',
+    programa_codigo: 'EPJA',
+    subprograma_codigo: 'ESA',
+    orden: 2,
+    descripcion: 'Segundo ciclo de secundaria humanística de adultos.',
+    activo: true,
+  },
+  {
+    id: 'niv-esa-3',
+    nombre: 'Aprendizajes Especializados',
+    etapa_nombre: 'Aprendizajes Especializados',
+    programa_codigo: 'EPJA',
+    subprograma_codigo: 'ESA',
+    orden: 3,
+    descripcion: 'Tercer ciclo de secundaria humanística (Bachillerato).',
+    activo: true,
+  },
+  // Niveles ETA - Sistemas Informáticos
+  {
+    id: 'niv-eta-sis-1',
     nombre: 'Técnico Básico',
-    etapa_nombre: 'Formación Técnica Tecnológica',
+    carrera_nombre: 'Sistemas Informáticos',
     programa_codigo: 'ETA',
-    descripcion: 'Primer nivel de formación técnica certificada.',
+    subprograma_codigo: 'ETA',
+    orden: 1,
+    descripcion: 'Nivel 1: Certificación inicial en operación y ofimática técnica.',
     activo: true,
   },
   {
-    id: 'niv-4',
+    id: 'niv-eta-sis-2',
     nombre: 'Técnico Auxiliar',
-    etapa_nombre: 'Formación Técnica Tecnológica',
+    carrera_nombre: 'Sistemas Informáticos',
     programa_codigo: 'ETA',
-    descripcion: 'Segundo nivel de especialización práctica.',
+    subprograma_codigo: 'ETA',
+    orden: 2,
+    descripcion: 'Nivel 2: Mantenimiento de hardware, redes y soporte técnico.',
     activo: true,
   },
   {
-    id: 'niv-5',
+    id: 'niv-eta-sis-3',
     nombre: 'Técnico Medio',
-    etapa_nombre: 'Formación Técnica Tecnológica',
+    carrera_nombre: 'Sistemas Informáticos',
     programa_codigo: 'ETA',
-    descripcion: 'Nivel técnico profesional habilitante.',
+    subprograma_codigo: 'ETA',
+    orden: 3,
+    descripcion: 'Nivel 3: Título profesional habilitante en desarrollo de software y sistemas.',
+    activo: true,
+  },
+  // Niveles ETA - Gastronomía
+  {
+    id: 'niv-eta-gas-1',
+    nombre: 'Técnico Básico',
+    carrera_nombre: 'Gastronomía',
+    programa_codigo: 'ETA',
+    subprograma_codigo: 'ETA',
+    orden: 1,
+    descripcion: 'Nivel 1: Técnicas básicas de cocina, higiene y manipulación de alimentos.',
+    activo: true,
+  },
+  {
+    id: 'niv-eta-gas-2',
+    nombre: 'Técnico Auxiliar',
+    carrera_nombre: 'Gastronomía',
+    programa_codigo: 'ETA',
+    subprograma_codigo: 'ETA',
+    orden: 2,
+    descripcion: 'Nivel 2: Elaboración de menús, panadería y repostería intermedia.',
+    activo: true,
+  },
+  {
+    id: 'niv-eta-gas-3',
+    nombre: 'Técnico Medio',
+    carrera_nombre: 'Gastronomía',
+    programa_codigo: 'ETA',
+    subprograma_codigo: 'ETA',
+    orden: 3,
+    descripcion: 'Nivel 3: Gestión gastronómica profesional, alta cocina y administración.',
+    activo: true,
+  },
+  // EDUPER
+  {
+    id: 'niv-eduper-1',
+    nombre: 'Cursos de Capacitación',
+    programa_codigo: 'EDUPER',
+    orden: 1,
+    descripcion: 'Cursos cortos de formación para el trabajo y desarrollo comunitario.',
+    activo: true,
+  },
+  {
+    id: 'niv-eduper-2',
+    nombre: 'Talleres Comunitarios',
+    programa_codigo: 'EDUPER',
+    orden: 2,
+    descripcion: 'Talleres prácticos vivenciales con participación comunitaria.',
+    activo: true,
+  },
+  {
+    id: 'niv-eduper-3',
+    nombre: 'Procesos Formativos Permanentes',
+    programa_codigo: 'EDUPER',
+    orden: 3,
+    descripcion: 'Programas continuos modulares de fortalecimiento comunitario.',
+    activo: true,
+  },
+  // CEE
+  {
+    id: 'niv-cee-1',
+    nombre: 'Atención Curricular Inclusiva',
+    programa_codigo: 'CEE',
+    orden: 1,
+    descripcion: 'Procesos de integración adaptativa para personas con necesidades especiales.',
     activo: true,
   },
 ];
 
-const KEY_PROGRAMAS = 'cea_programas_v1';
-const KEY_ETAPAS = 'cea_etapas_v1';
-const KEY_NIVELES = 'cea_niveles_v1';
+const KEY_PROGRAMAS = 'cea_programas_v2';
+const KEY_SUBPROGRAMAS = 'cea_subprogramas_v2';
+const KEY_CARRERAS = 'cea_carreras_v2';
+const KEY_ETAPAS = 'cea_etapas_v2';
+const KEY_NIVELES = 'cea_niveles_v2';
 const KEY_ESTUDIANTES = 'cea_estudiantes_v1';
 
 // Helper to notify changes across components
@@ -112,6 +229,46 @@ export function saveLocalProgramas(list: Programa[]): void {
     notifyAcademicChanged();
   } catch (e) {
     console.warn('Error al guardar programas locales:', e);
+  }
+}
+
+// SUBPROGRAMAS
+export function getLocalSubprogramas(): Subprograma[] {
+  try {
+    const raw = localStorage.getItem(KEY_SUBPROGRAMAS);
+    if (raw) return JSON.parse(raw);
+  } catch (e) {
+    console.warn('Error al leer subprogramas locales:', e);
+  }
+  return INITIAL_SUBPROGRAMAS;
+}
+
+export function saveLocalSubprogramas(list: Subprograma[]): void {
+  try {
+    localStorage.setItem(KEY_SUBPROGRAMAS, JSON.stringify(list));
+    notifyAcademicChanged();
+  } catch (e) {
+    console.warn('Error al guardar subprogramas locales:', e);
+  }
+}
+
+// CARRERAS TECNICAS (ETA)
+export function getLocalCarreras(): CarreraTecnica[] {
+  try {
+    const raw = localStorage.getItem(KEY_CARRERAS);
+    if (raw) return JSON.parse(raw);
+  } catch (e) {
+    console.warn('Error al leer carreras locales:', e);
+  }
+  return INITIAL_CARRERAS;
+}
+
+export function saveLocalCarreras(list: CarreraTecnica[]): void {
+  try {
+    localStorage.setItem(KEY_CARRERAS, JSON.stringify(list));
+    notifyAcademicChanged();
+  } catch (e) {
+    console.warn('Error al guardar carreras locales:', e);
   }
 }
 
@@ -175,6 +332,64 @@ export async function loadProgramasFromSupabase(): Promise<Programa[]> {
   return getLocalProgramas();
 }
 
+export async function loadSubprogramasFromSupabase(): Promise<Subprograma[]> {
+  if (isSupabaseConfigured && supabase) {
+    try {
+      const { data, error } = await supabase
+        .from('subprogramas')
+        .select('*, programas(codigo, nombre)')
+        .order('codigo', { ascending: true });
+
+      if (!error && data && data.length > 0) {
+        const mapped: Subprograma[] = data.map((item: any) => ({
+          id: item.id,
+          programa_id: item.programa_id,
+          programa_codigo: item.programas?.codigo || 'EPJA',
+          codigo: item.codigo,
+          nombre: item.nombre,
+          descripcion: item.descripcion,
+          activo: item.activo ?? true,
+          created_at: item.created_at,
+        }));
+        saveLocalSubprogramas(mapped);
+        return mapped;
+      }
+    } catch (e) {
+      console.warn('Error al obtener subprogramas de Supabase:', e);
+    }
+  }
+  return getLocalSubprogramas();
+}
+
+export async function loadCarrerasFromSupabase(): Promise<CarreraTecnica[]> {
+  if (isSupabaseConfigured && supabase) {
+    try {
+      const { data, error } = await supabase
+        .from('carreras')
+        .select('*')
+        .order('nombre', { ascending: true });
+
+      if (!error && data && data.length > 0) {
+        const mapped: CarreraTecnica[] = data.map((item: any) => ({
+          id: item.id,
+          subprograma_id: item.subprograma_id,
+          programa_codigo: 'ETA',
+          codigo: item.codigo,
+          nombre: item.nombre,
+          descripcion: item.descripcion,
+          activo: item.activo ?? true,
+          created_at: item.created_at,
+        }));
+        saveLocalCarreras(mapped);
+        return mapped;
+      }
+    } catch (e) {
+      console.warn('Error al obtener carreras de Supabase:', e);
+    }
+  }
+  return getLocalCarreras();
+}
+
 export async function loadEtapasFromSupabase(): Promise<Etapa[]> {
   if (isSupabaseConfigured && supabase) {
     try {
@@ -200,7 +415,7 @@ export async function loadNivelesFromSupabase(): Promise<NivelEducativo[]> {
       const { data, error } = await supabase
         .from('niveles')
         .select('*')
-        .order('created_at', { ascending: true });
+        .order('orden', { ascending: true });
 
       if (!error && data && data.length > 0) {
         saveLocalNiveles(data as NivelEducativo[]);

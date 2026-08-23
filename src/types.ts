@@ -98,8 +98,28 @@ export interface AsignacionDocente {
   docente_id: string;
   grupo_id: string;
   materia: string;
+  programa_id?: string;
+  programa_codigo?: string; // EPJA, ETA, EDUPER, CEE
+  subprograma_id?: string;
+  subprograma_codigo?: string; // EPA, ESA
+  carrera_id?: string;
+  carrera_nombre?: string;
+  etapa_id?: string;
+  etapa_nombre?: string;
+  nivel_id?: string;
+  nivel_nombre?: string;
+  sede_id?: string;
+  sede_nombre?: string;
+  estado?: 'activo' | 'inactivo';
+  activo?: boolean;
+  fecha_inicio?: string;
+  fecha_fin?: string;
+  motivo_cambio?: string;
+  observacion?: string;
+  gestion?: number;
   created_at?: string;
-  // Joined
+  updated_at?: string;
+  // Joined / UI Helpers
   grupo_nombre?: string;
   docente_nombre?: string;
 }
@@ -108,6 +128,30 @@ export interface Etapa {
   id: string;
   nombre: string;
   programa_codigo?: string;
+  subprograma_codigo?: string;
+  descripcion?: string;
+  activo: boolean;
+  created_at?: string;
+}
+
+export interface Subprograma {
+  id: string;
+  programa_id?: string;
+  programa_codigo?: string;
+  codigo: string;
+  nombre: string;
+  descripcion?: string;
+  activo: boolean;
+  created_at?: string;
+}
+
+export interface CarreraTecnica {
+  id: string;
+  subprograma_id?: string;
+  programa_id?: string;
+  programa_codigo?: string;
+  codigo?: string;
+  nombre: string;
   descripcion?: string;
   activo: boolean;
   created_at?: string;
@@ -118,6 +162,11 @@ export interface NivelEducativo {
   nombre: string;
   etapa_nombre?: string;
   programa_codigo?: string;
+  subprograma_codigo?: string;
+  subprograma_id?: string;
+  carrera_id?: string;
+  carrera_nombre?: string;
+  orden?: number;
   descripcion?: string;
   activo: boolean;
   created_at?: string;

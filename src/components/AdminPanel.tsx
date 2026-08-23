@@ -16,20 +16,34 @@ import {
   Layers,
   GraduationCap,
   AlertCircle,
-  RefreshCw
+  RefreshCw,
+  FolderTree,
+  Laptop,
+  Utensils,
+  Sparkles,
+  Info,
+  Check,
+  ChevronRight,
+  ArrowRight
 } from 'lucide-react';
-import { Perfil, Sede, Horario, Programa, Etapa, NivelEducativo, DatosInstitucionales } from '../types';
+import { Perfil, Sede, Horario, Programa, Subprograma, CarreraTecnica, Etapa, NivelEducativo, DatosInstitucionales } from '../types';
 import { INITIAL_SEDES } from '../lib/mockData';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { getLocalDatosInstitucionales, saveDatosInstitucionales, loadDatosInstitucionales } from '../lib/institutional';
 import {
   getLocalProgramas,
   saveLocalProgramas,
+  getLocalSubprogramas,
+  saveLocalSubprogramas,
+  getLocalCarreras,
+  saveLocalCarreras,
   getLocalEtapas,
   saveLocalEtapas,
   getLocalNiveles,
   saveLocalNiveles,
   loadProgramasFromSupabase,
+  loadSubprogramasFromSupabase,
+  loadCarrerasFromSupabase,
   loadEtapasFromSupabase,
   loadNivelesFromSupabase
 } from '../lib/academic';
@@ -52,7 +66,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   >('datos');
 
   // Academic Sub-section inside 'programas'
-  const [academicCategory, setAcademicCategory] = useState<'programas' | 'etapas' | 'niveles'>('programas');
+  const [academicViewMode, setAcademicViewMode] = useState<'arbol' | 'tablas'>('arbol');
+  const [academicCategory, setAcademicCategory] = useState<'programas' | 'subprogramas' | 'carreras' | 'etapas' | 'niveles'>('programas');
+  const [selectedTreeProgram, setSelectedTreeProgram] = useState<'EPJA' | 'ETA' | 'EDUPER' | 'CEE'>('EPJA');
 
   const [horarios, setHorarios] = useState<Horario[]>([]);
   const [loadingHorarios, setLoadingHorarios] = useState<boolean>(false);
@@ -138,6 +154,16 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     setProgramas(list);
   };
 
+  const fetchSubprogramas = async () => {
+    const list = await loadSubprogramasFromSupabase();
+    setSubprogramas(list);
+  };
+
+  const fetchCarreras = async () => {
+    const list = await loadCarrerasFromSupabase();
+    setCarreras(list);
+  };
+
   const fetchEtapas = async () => {
     const list = await loadEtapasFromSupabase();
     setEtapas(list);
@@ -152,6 +178,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     fetchSedes();
     fetchHorarios();
     fetchProgramas();
+    fetchSubprogramas();
+    fetchCarreras();
     fetchEtapas();
     fetchNiveles();
   }, []);
@@ -161,6 +189,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     if (activeAdminSubTab === 'horarios') fetchHorarios();
     if (activeAdminSubTab === 'programas') {
       fetchProgramas();
+      fetchSubprogramas();
+      fetchCarreras();
       fetchEtapas();
       fetchNiveles();
     }
@@ -173,6 +203,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
   // Dynamic Academic State
   const [programas, setProgramas] = useState<Programa[]>([]);
+  const [subprogramas, setSubprogramas] = useState<Subprograma[]>([]);
+  const [carreras, setCarreras] = useState<CarreraTecnica[]>([]);
   const [etapas, setEtapas] = useState<Etapa[]>([]);
   const [niveles, setNiveles] = useState<NivelEducativo[]>([]);
 
@@ -189,7 +221,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     }
   }, [datosInstitucionales]);
 
-  // Modal / Form state for Programas, Etapas & Niveles
+  // Modal / Form state for Programas, Subprogramas, Carreras, Etapas & Niveles
   const [editingPrograma, setEditingPrograma] = useState<Programa | null>(null);
   const [isProgramaModalOpen, setIsProgramaModalOpen] = useState(false);
   const [progForm, setProgForm] = useState<{ codigo: string; nombre: string; descripcion: string }>({
@@ -198,20 +230,41 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     descripcion: ''
   });
 
+  const [editingSubprograma, setEditingSubprograma] = useState<Subprograma | null>(null);
+  const [isSubprogramaModalOpen, setIsSubprogramaModalOpen] = useState(false);
+  const [subprogForm, setSubprogForm] = useState<{ codigo: string; nombre: string; descripcion: string; programa_codigo: string }>({
+    codigo: '',
+    nombre: '',
+    descripcion: '',
+    programa_codigo: 'EPJA'
+  });
+
+  const [editingCarrera, setEditingCarrera] = useState<CarreraTecnica | null>(null);
+  const [isCarreraModalOpen, setIsCarreraModalOpen] = useState(false);
+  const [carreraForm, setCarreraForm] = useState<{ nombre: string; codigo: string; descripcion: string }>({
+    nombre: '',
+    codigo: '',
+    descripcion: ''
+  });
+
   const [editingEtapa, setEditingEtapa] = useState<Etapa | null>(null);
   const [isEtapaModalOpen, setIsEtapaModalOpen] = useState(false);
-  const [etapaForm, setEtapaForm] = useState<{ nombre: string; programa_codigo: string; descripcion: string }>({
+  const [etapaForm, setEtapaForm] = useState<{ nombre: string; programa_codigo: string; subprograma_codigo: string; descripcion: string }>({
     nombre: '',
-    programa_codigo: 'EPA',
+    programa_codigo: 'EPJA',
+    subprograma_codigo: 'EPA',
     descripcion: ''
   });
 
   const [editingNivel, setEditingNivel] = useState<NivelEducativo | null>(null);
   const [isNivelModalOpen, setIsNivelModalOpen] = useState(false);
-  const [nivelForm, setNivelForm] = useState<{ nombre: string; etapa_nombre: string; programa_codigo: string; descripcion: string }>({
+  const [nivelForm, setNivelForm] = useState<{ nombre: string; etapa_nombre: string; programa_codigo: string; subprograma_codigo: string; carrera_nombre: string; orden: number; descripcion: string }>({
     nombre: '',
     etapa_nombre: '',
-    programa_codigo: 'EPA',
+    programa_codigo: 'EPJA',
+    subprograma_codigo: 'EPA',
+    carrera_nombre: '',
+    orden: 1,
     descripcion: ''
   });
 
@@ -391,16 +444,218 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     showNotification('Estado del programa actualizado.');
   };
 
+  /* ================= SUBPROGRAMAS CRUD ================= */
+  const handleOpenAddSubprograma = (progCode = 'EPJA') => {
+    setEditingSubprograma(null);
+    setSubprogForm({ codigo: '', nombre: '', descripcion: '', programa_codigo: progCode });
+    setIsSubprogramaModalOpen(true);
+  };
+
+  const handleOpenEditSubprograma = (sp: Subprograma) => {
+    setEditingSubprograma(sp);
+    setSubprogForm({
+      codigo: sp.codigo,
+      nombre: sp.nombre,
+      descripcion: sp.descripcion || '',
+      programa_codigo: sp.programa_codigo || 'EPJA'
+    });
+    setIsSubprogramaModalOpen(true);
+  };
+
+  const handleSaveSubprograma = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const parentProg = programas.find(p => p.codigo === subprogForm.programa_codigo);
+    if (isSupabaseConfigured && supabase) {
+      if (editingSubprograma) {
+        const { error } = await supabase
+          .from('subprogramas')
+          .update({
+            codigo: subprogForm.codigo.toUpperCase(),
+            nombre: subprogForm.nombre,
+            descripcion: subprogForm.descripcion,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', editingSubprograma.id);
+
+        if (error) {
+          showNotification('Error en Supabase: ' + error.message);
+          return;
+        }
+        showNotification(`Subprograma ${subprogForm.codigo} actualizado en Supabase.`);
+      } else {
+        const { error } = await supabase
+          .from('subprogramas')
+          .insert({
+            programa_id: parentProg?.id,
+            codigo: subprogForm.codigo.toUpperCase(),
+            nombre: subprogForm.nombre,
+            descripcion: subprogForm.descripcion,
+            activo: true
+          });
+
+        if (error) {
+          showNotification('Error en Supabase: ' + error.message);
+          return;
+        }
+        showNotification(`Subprograma ${subprogForm.codigo.toUpperCase()} añadido en Supabase.`);
+      }
+      await fetchSubprogramas();
+    } else {
+      let updated: Subprograma[];
+      if (editingSubprograma) {
+        updated = subprogramas.map(s => s.id === editingSubprograma.id ? { ...s, ...subprogForm, codigo: subprogForm.codigo.toUpperCase() } : s);
+      } else {
+        const newS: Subprograma = {
+          id: `subprog-${Date.now()}`,
+          programa_id: parentProg?.id || 'prog-1',
+          programa_codigo: subprogForm.programa_codigo,
+          codigo: subprogForm.codigo.toUpperCase(),
+          nombre: subprogForm.nombre,
+          descripcion: subprogForm.descripcion,
+          activo: true
+        };
+        updated = [...subprogramas, newS];
+      }
+      setSubprogramas(updated);
+      saveLocalSubprogramas(updated);
+    }
+    setIsSubprogramaModalOpen(false);
+  };
+
+  const handleToggleSubprogramaActive = async (id: string) => {
+    const target = subprogramas.find(s => s.id === id);
+    if (!target) return;
+
+    if (isSupabaseConfigured && supabase) {
+      const { error } = await supabase
+        .from('subprogramas')
+        .update({ activo: !target.activo, updated_at: new Date().toISOString() })
+        .eq('id', id);
+
+      if (error) {
+        showNotification('Error en Supabase: ' + error.message);
+        return;
+      }
+      await fetchSubprogramas();
+    } else {
+      const updated = subprogramas.map(s => s.id === id ? { ...s, activo: !s.activo } : s);
+      setSubprogramas(updated);
+      saveLocalSubprogramas(updated);
+    }
+    showNotification('Estado del subprograma actualizado.');
+  };
+
+  /* ================= CARRERAS TECNICAS (ETA) CRUD ================= */
+  const handleOpenAddCarrera = () => {
+    setEditingCarrera(null);
+    setCarreraForm({ nombre: '', codigo: '', descripcion: '' });
+    setIsCarreraModalOpen(true);
+  };
+
+  const handleOpenEditCarrera = (c: CarreraTecnica) => {
+    setEditingCarrera(c);
+    setCarreraForm({ nombre: c.nombre, codigo: c.codigo || '', descripcion: c.descripcion || '' });
+    setIsCarreraModalOpen(true);
+  };
+
+  const handleSaveCarrera = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const etaProg = programas.find(p => p.codigo === 'ETA');
+    if (isSupabaseConfigured && supabase) {
+      if (editingCarrera) {
+        const { error } = await supabase
+          .from('carreras')
+          .update({
+            nombre: carreraForm.nombre,
+            codigo: carreraForm.codigo.toUpperCase(),
+            descripcion: carreraForm.descripcion,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', editingCarrera.id);
+
+        if (error) {
+          showNotification('Error en Supabase: ' + error.message);
+          return;
+        }
+        showNotification(`Carrera "${carreraForm.nombre}" actualizada en Supabase.`);
+      } else {
+        const { error } = await supabase
+          .from('carreras')
+          .insert({
+            programa_id: etaProg?.id,
+            nombre: carreraForm.nombre,
+            codigo: carreraForm.codigo.toUpperCase(),
+            descripcion: carreraForm.descripcion,
+            activo: true
+          });
+
+        if (error) {
+          showNotification('Error en Supabase: ' + error.message);
+          return;
+        }
+        showNotification(`Carrera "${carreraForm.nombre}" añadida a ETA en Supabase.`);
+      }
+      await fetchCarreras();
+    } else {
+      let updated: CarreraTecnica[];
+      if (editingCarrera) {
+        updated = carreras.map(c => c.id === editingCarrera.id ? { ...c, ...carreraForm } : c);
+      } else {
+        const newC: CarreraTecnica = {
+          id: `carr-${Date.now()}`,
+          programa_id: etaProg?.id || 'prog-2',
+          programa_codigo: 'ETA',
+          codigo: carreraForm.codigo.toUpperCase(),
+          nombre: carreraForm.nombre,
+          descripcion: carreraForm.descripcion,
+          activo: true
+        };
+        updated = [...carreras, newC];
+      }
+      setCarreras(updated);
+      saveLocalCarreras(updated);
+    }
+    setIsCarreraModalOpen(false);
+  };
+
+  const handleToggleCarreraActive = async (id: string) => {
+    const target = carreras.find(c => c.id === id);
+    if (!target) return;
+
+    if (isSupabaseConfigured && supabase) {
+      const { error } = await supabase
+        .from('carreras')
+        .update({ activo: !target.activo, updated_at: new Date().toISOString() })
+        .eq('id', id);
+
+      if (error) {
+        showNotification('Error en Supabase: ' + error.message);
+        return;
+      }
+      await fetchCarreras();
+    } else {
+      const updated = carreras.map(c => c.id === id ? { ...c, activo: !c.activo } : c);
+      setCarreras(updated);
+      saveLocalCarreras(updated);
+    }
+    showNotification('Estado de la carrera técnica actualizado.');
+  };
+
   /* ================= ETAPAS CRUD ================= */
-  const handleOpenAddEtapa = () => {
+  const handleOpenAddEtapa = (subprogCode = 'EPA') => {
     setEditingEtapa(null);
-    setEtapaForm({ nombre: '', programa_codigo: 'EPA', descripcion: '' });
+    setEtapaForm({ nombre: '', programa_codigo: 'EPJA', subprograma_codigo: subprogCode, descripcion: '' });
     setIsEtapaModalOpen(true);
   };
 
   const handleOpenEditEtapa = (e: Etapa) => {
     setEditingEtapa(e);
-    setEtapaForm({ nombre: e.nombre, programa_codigo: e.programa_codigo || 'EPA', descripcion: e.descripcion || '' });
+    setEtapaForm({
+      nombre: e.nombre,
+      programa_codigo: e.programa_codigo || 'EPJA',
+      subprograma_codigo: e.subprograma_codigo || 'EPA',
+      descripcion: e.descripcion || ''
+    });
     setIsEtapaModalOpen(true);
   };
 
@@ -413,6 +668,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           .update({
             nombre: etapaForm.nombre,
             programa_codigo: etapaForm.programa_codigo,
+            subprograma_codigo: etapaForm.subprograma_codigo,
             descripcion: etapaForm.descripcion,
             updated_at: new Date().toISOString()
           })
@@ -429,6 +685,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           .insert({
             nombre: etapaForm.nombre,
             programa_codigo: etapaForm.programa_codigo,
+            subprograma_codigo: etapaForm.subprograma_codigo,
             descripcion: etapaForm.descripcion,
             activo: true
           });
@@ -449,6 +706,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           id: `etapa-${Date.now()}`,
           nombre: etapaForm.nombre,
           programa_codigo: etapaForm.programa_codigo,
+          subprograma_codigo: etapaForm.subprograma_codigo,
           descripcion: etapaForm.descripcion,
           activo: true
         };
@@ -484,9 +742,17 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   };
 
   /* ================= NIVELES CRUD ================= */
-  const handleOpenAddNivel = () => {
+  const handleOpenAddNivel = (context?: { prog?: string; subprog?: string; carrera?: string; etapa?: string }) => {
     setEditingNivel(null);
-    setNivelForm({ nombre: '', etapa_nombre: '', programa_codigo: 'EPA', descripcion: '' });
+    setNivelForm({
+      nombre: '',
+      etapa_nombre: context?.etapa || '',
+      programa_codigo: context?.prog || 'EPJA',
+      subprograma_codigo: context?.subprog || 'EPA',
+      carrera_nombre: context?.carrera || '',
+      orden: 1,
+      descripcion: ''
+    });
     setIsNivelModalOpen(true);
   };
 
@@ -495,7 +761,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     setNivelForm({
       nombre: n.nombre,
       etapa_nombre: n.etapa_nombre || '',
-      programa_codigo: n.programa_codigo || 'EPA',
+      programa_codigo: n.programa_codigo || 'EPJA',
+      subprograma_codigo: n.subprograma_codigo || '',
+      carrera_nombre: n.carrera_nombre || '',
+      orden: n.orden || 1,
       descripcion: n.descripcion || ''
     });
     setIsNivelModalOpen(true);
@@ -511,6 +780,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             nombre: nivelForm.nombre,
             etapa_nombre: nivelForm.etapa_nombre,
             programa_codigo: nivelForm.programa_codigo,
+            subprograma_codigo: nivelForm.subprograma_codigo,
+            carrera_nombre: nivelForm.carrera_nombre,
+            orden: nivelForm.orden,
             descripcion: nivelForm.descripcion,
             updated_at: new Date().toISOString()
           })
@@ -528,6 +800,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             nombre: nivelForm.nombre,
             etapa_nombre: nivelForm.etapa_nombre,
             programa_codigo: nivelForm.programa_codigo,
+            subprograma_codigo: nivelForm.subprograma_codigo,
+            carrera_nombre: nivelForm.carrera_nombre,
+            orden: nivelForm.orden,
             descripcion: nivelForm.descripcion,
             activo: true
           });
@@ -549,6 +824,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           nombre: nivelForm.nombre,
           etapa_nombre: nivelForm.etapa_nombre,
           programa_codigo: nivelForm.programa_codigo,
+          subprograma_codigo: nivelForm.subprograma_codigo,
+          carrera_nombre: nivelForm.carrera_nombre,
+          orden: nivelForm.orden,
           descripcion: nivelForm.descripcion,
           activo: true
         };
@@ -855,231 +1133,831 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         </div>
       )}
 
-      {/* PROGRAMAS, ETAPAS Y NIVELES (ESTRUCTURA ACADÉMICA) */}
+      {/* PROGRAMAS, ETAPAS Y NIVELES (ESTRUCTURA ACADÉMICA OFICIAL CEA) */}
       {activeAdminSubTab === 'programas' && (
-        <div className="space-y-4">
-          {/* Sub-selector for Academic Category */}
-          <div className="flex bg-slate-100 p-1 rounded-2xl border border-slate-200">
-            <button
-              onClick={() => setAcademicCategory('programas')}
-              className={`flex-1 py-2 rounded-xl text-xs font-extrabold flex items-center justify-center gap-1.5 transition-all ${
-                academicCategory === 'programas' ? 'bg-[#17324D] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <GraduationCap className="w-4 h-4" />
-              <span>Programas ({programas.length})</span>
-            </button>
+        <div className="space-y-5">
+          {/* Header & View Mode Switcher */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-4 rounded-3xl border border-slate-200 shadow-xs">
+            <div>
+              <h3 className="font-extrabold text-lg text-[#17324D] flex items-center gap-2">
+                <FolderTree className="w-5 h-5 text-[#00A651]" />
+                <span>Estructura Educativa Institucional</span>
+              </h3>
+              <p className="text-xs text-slate-500 font-medium mt-0.5">
+                Organización de Educación Alternativa: EPJA (EPA/ESA), ETA (Carreras y Niveles), EDUPER y CEE
+              </p>
+            </div>
 
-            <button
-              onClick={() => setAcademicCategory('etapas')}
-              className={`flex-1 py-2 rounded-xl text-xs font-extrabold flex items-center justify-center gap-1.5 transition-all ${
-                academicCategory === 'etapas' ? 'bg-[#17324D] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <BookOpen className="w-4 h-4" />
-              <span>Etapas ({etapas.length})</span>
-            </button>
+            <div className="flex bg-slate-100 p-1 rounded-2xl border border-slate-200 self-start sm:self-auto">
+              <button
+                type="button"
+                onClick={() => setAcademicViewMode('arbol')}
+                className={`px-3.5 py-1.5 rounded-xl text-xs font-extrabold flex items-center gap-1.5 transition-all ${
+                  academicViewMode === 'arbol' ? 'bg-[#17324D] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <FolderTree className="w-3.5 h-3.5" />
+                <span>Árbol Oficial</span>
+              </button>
 
-            <button
-              onClick={() => setAcademicCategory('niveles')}
-              className={`flex-1 py-2 rounded-xl text-xs font-extrabold flex items-center justify-center gap-1.5 transition-all ${
-                academicCategory === 'niveles' ? 'bg-[#17324D] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <Layers className="w-4 h-4" />
-              <span>Niveles ({niveles.length})</span>
-            </button>
+              <button
+                type="button"
+                onClick={() => setAcademicViewMode('tablas')}
+                className={`px-3.5 py-1.5 rounded-xl text-xs font-extrabold flex items-center gap-1.5 transition-all ${
+                  academicViewMode === 'tablas' ? 'bg-[#17324D] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <Layers className="w-3.5 h-3.5" />
+                <span>Tablas / Registros</span>
+              </button>
+            </div>
           </div>
 
-          {/* 1. SECTION PROGRAMAS */}
-          {academicCategory === 'programas' && (
+          {/* VISTA 1: ÁRBOL JERÁRQUICO OFICIAL */}
+          {academicViewMode === 'arbol' && (
             <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="font-extrabold text-base text-[#17324D]">Programas Educativos</h3>
-                  <p className="text-xs text-slate-500 font-medium">Gestión de EPA, ESA, ETA, EDUPER, CEE y otros</p>
-                </div>
-
-                <button
-                  onClick={handleOpenAddPrograma}
-                  id="btn-add-programa"
-                  className="h-10 px-4 bg-[#00A651] hover:bg-[#008f45] text-white font-bold text-xs rounded-2xl flex items-center gap-1.5 shadow-xs transition-all"
-                >
-                  <Plus className="w-4 h-4 text-[#FFC845]" />
-                  <span>Añadir Programa</span>
-                </button>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {programas.map(p => (
-                  <div key={p.id} className="p-4 bg-white rounded-3xl border border-slate-200 shadow-xs space-y-3 flex flex-col justify-between">
-                    <div className="space-y-1.5">
-                      <div className="flex justify-between items-center">
-                        <span className="bg-[#17324D] text-white text-[11px] font-extrabold px-2.5 py-0.5 rounded-full">
-                          {p.codigo}
-                        </span>
-                        <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full border ${
-                          p.activo ? 'bg-emerald-100 text-emerald-800 border-emerald-300' : 'bg-slate-100 text-slate-500 border-slate-300'
+              {/* Program Selector Tabs */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                {[
+                  { code: 'EPJA', label: 'EPJA', title: 'Jóvenes y Adultos', desc: 'EPA (Primaria) & ESA (Secundaria)', icon: GraduationCap, color: 'emerald' },
+                  { code: 'ETA', label: 'ETA', title: 'Técnica Alternativa', desc: 'Carreras & Niveles Técnicos', icon: Laptop, color: 'blue' },
+                  { code: 'EDUPER', label: 'EDUPER', title: 'Educación Permanente', desc: 'Cursos & Talleres Comunitarios', icon: BookOpen, color: 'amber' },
+                  { code: 'CEE', label: 'CEE', title: 'Educación Especial', desc: 'Inclusión & Adaptaciones', icon: Sparkles, color: 'purple' },
+                ].map(p => {
+                  const isSelected = selectedTreeProgram === p.code;
+                  const Icon = p.icon;
+                  return (
+                    <button
+                      key={p.code}
+                      type="button"
+                      onClick={() => setSelectedTreeProgram(p.code as any)}
+                      className={`p-3.5 rounded-3xl border text-left transition-all relative overflow-hidden flex flex-col justify-between ${
+                        isSelected
+                          ? 'bg-[#17324D] border-[#17324D] text-white shadow-md'
+                          : 'bg-white border-slate-200 hover:border-slate-300 text-slate-700 hover:bg-slate-50'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className={`w-8 h-8 rounded-xl flex items-center justify-center ${
+                          isSelected ? 'bg-white/15 text-[#FFC845]' : 'bg-slate-100 text-slate-600'
                         }`}>
-                          {p.activo ? 'Activo' : 'Inactivo'}
+                          <Icon className="w-4 h-4" />
+                        </div>
+                        <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full ${
+                          isSelected ? 'bg-[#00A651] text-white' : 'bg-slate-100 text-slate-500'
+                        }`}>
+                          {p.code}
                         </span>
                       </div>
-                      <h4 className="font-extrabold text-base text-[#17324D]">{p.nombre}</h4>
-                      <p className="text-xs text-slate-500 font-medium">{p.descripcion || 'Sin descripción'}</p>
+                      <div className="mt-2.5">
+                        <h4 className={`font-extrabold text-sm ${isSelected ? 'text-white' : 'text-[#17324D]'}`}>{p.title}</h4>
+                        <p className={`text-[11px] font-medium leading-snug mt-0.5 ${isSelected ? 'text-slate-200' : 'text-slate-500'}`}>{p.desc}</p>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* 1. SECCIÓN EPJA (EPA + ESA) */}
+              {selectedTreeProgram === 'EPJA' && (
+                <div className="space-y-4">
+                  <div className="p-4 bg-emerald-50/80 border border-emerald-200 rounded-3xl text-xs text-emerald-950 font-medium space-y-1">
+                    <div className="flex items-center gap-2 font-extrabold text-emerald-900 text-sm">
+                      <GraduationCap className="w-4 h-4 text-[#00A651]" />
+                      <span>EPJA — Educación de Personas Jóvenes y Adultas</span>
+                    </div>
+                    <p>
+                      Estructurada en dos subsistemas humanísticos: <strong>EPA</strong> (Educación Primaria de Adultos) y <strong>ESA</strong> (Educación Secundaria de Adultos).
+                    </p>
+                  </div>
+
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                    {/* BLOQUE EPA */}
+                    <div className="p-5 bg-white rounded-3xl border border-slate-200 shadow-xs space-y-4 flex flex-col justify-between">
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                          <div className="flex items-center gap-2">
+                            <span className="w-8 h-8 rounded-xl bg-emerald-100 text-[#00A651] font-black text-xs flex items-center justify-center">
+                              EPA
+                            </span>
+                            <div>
+                              <h4 className="font-extrabold text-base text-[#17324D]">Educación Primaria de Adultos</h4>
+                              <span className="text-[11px] text-emerald-700 font-bold bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
+                                Primaria Humanística
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* REGLA INSTITUCIONAL CLAVE */}
+                        <div className="p-3 bg-amber-50/80 border border-amber-200 rounded-2xl text-[11px] text-amber-900 font-semibold flex items-start gap-2">
+                          <Info className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
+                          <span>
+                            <strong>Regla EPA:</strong> EPA solamente contiene hasta <strong>Aprendizajes Avanzados</strong>. NO debe contener Aplicados, Complementarios ni Especializados.
+                          </span>
+                        </div>
+
+                        <div className="space-y-2.5 pt-1">
+                          <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-2xl space-y-1">
+                            <div className="flex items-center justify-between">
+                              <span className="font-extrabold text-sm text-[#17324D] flex items-center gap-2">
+                                <Check className="w-4 h-4 text-[#00A651]" />
+                                <span>1. Aprendizajes Elementales</span>
+                              </span>
+                              <span className="text-[10px] font-extrabold px-2 py-0.5 bg-emerald-100 text-emerald-800 rounded-full">
+                                Ciclo Inicial
+                              </span>
+                            </div>
+                            <p className="text-xs text-slate-500 font-medium pl-6">
+                              Alfabetización inicial, lectoescritura, cálculo básico y competencias primarias fundamentales.
+                            </p>
+                          </div>
+
+                          <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-2xl space-y-1">
+                            <div className="flex items-center justify-between">
+                              <span className="font-extrabold text-sm text-[#17324D] flex items-center gap-2">
+                                <Check className="w-4 h-4 text-[#00A651]" />
+                                <span>2. Aprendizajes Avanzados</span>
+                              </span>
+                              <span className="text-[10px] font-extrabold px-2 py-0.5 bg-emerald-100 text-emerald-800 rounded-full">
+                                Culminación Primaria
+                              </span>
+                            </div>
+                            <p className="text-xs text-slate-500 font-medium pl-6">
+                              Consolidación de saberes de primaria, comprensión lectora, ciencias y habilitación para el ingreso a Secundaria.
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-xs font-bold text-slate-500">
+                        <span>Total: 2 Etapas / Niveles oficiales</span>
+                        <button
+                          type="button"
+                          onClick={() => handleOpenAddEtapa('EPA')}
+                          className="h-8 px-3 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-xl font-bold flex items-center gap-1 transition-all"
+                        >
+                          <Plus className="w-3.5 h-3.5 text-[#00A651]" />
+                          <span>Gestionar EPA</span>
+                        </button>
+                      </div>
                     </div>
 
-                    <div className="flex items-center gap-2 pt-2 border-t border-slate-100">
-                      <button
-                        onClick={() => handleOpenEditPrograma(p)}
-                        className="flex-1 h-9 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs rounded-xl flex items-center justify-center gap-1 transition-all"
-                      >
-                        <Pencil className="w-3.5 h-3.5 text-[#00A651]" />
-                        <span>Editar</span>
-                      </button>
+                    {/* BLOQUE ESA */}
+                    <div className="p-5 bg-white rounded-3xl border border-slate-200 shadow-xs space-y-4 flex flex-col justify-between">
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                          <div className="flex items-center gap-2">
+                            <span className="w-8 h-8 rounded-xl bg-blue-100 text-blue-700 font-black text-xs flex items-center justify-center">
+                              ESA
+                            </span>
+                            <div>
+                              <h4 className="font-extrabold text-base text-[#17324D]">Educación Secundaria de Adultos</h4>
+                              <span className="text-[11px] text-blue-700 font-bold bg-blue-50 px-2 py-0.5 rounded-md border border-blue-200">
+                                Secundaria Humanística
+                              </span>
+                            </div>
+                          </div>
+                        </div>
 
-                      <button
-                        onClick={() => handleToggleProgramaActive(p.id)}
-                        className={`px-3 h-9 rounded-xl font-bold text-xs flex items-center justify-center gap-1 transition-all ${
-                          p.activo
-                            ? 'bg-red-50 hover:bg-red-100 text-red-700 border border-red-200'
-                            : 'bg-emerald-50 hover:bg-emerald-100 text-[#00A651] border border-emerald-200'
-                        }`}
-                      >
-                        <Power className="w-3.5 h-3.5" />
-                        <span>{p.activo ? 'Desactivar' : 'Activar'}</span>
-                      </button>
+                        <div className="p-3 bg-blue-50/80 border border-blue-200 rounded-2xl text-[11px] text-blue-900 font-semibold flex items-start gap-2">
+                          <Info className="w-4 h-4 text-blue-700 shrink-0 mt-0.5" />
+                          <span>
+                            <strong>Estructura ESA:</strong> Comprende de forma exclusiva los 3 ciclos de secundaria: <strong>Aplicados</strong>, <strong>Complementarios</strong> y <strong>Especializados</strong>.
+                          </span>
+                        </div>
+
+                        <div className="space-y-2.5 pt-1">
+                          <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-2xl space-y-1">
+                            <div className="flex items-center justify-between">
+                              <span className="font-extrabold text-sm text-[#17324D] flex items-center gap-2">
+                                <Check className="w-4 h-4 text-blue-600" />
+                                <span>1. Aprendizajes Aplicados</span>
+                              </span>
+                              <span className="text-[10px] font-extrabold px-2 py-0.5 bg-blue-100 text-blue-800 rounded-full">
+                                1er Ciclo Secundaria
+                              </span>
+                            </div>
+                            <p className="text-xs text-slate-500 font-medium pl-6">
+                              Primer ciclo formativo orientado a la aplicación comunitaria y consolidación humanística.
+                            </p>
+                          </div>
+
+                          <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-2xl space-y-1">
+                            <div className="flex items-center justify-between">
+                              <span className="font-extrabold text-sm text-[#17324D] flex items-center gap-2">
+                                <Check className="w-4 h-4 text-blue-600" />
+                                <span>2. Aprendizajes Complementarios</span>
+                              </span>
+                              <span className="text-[10px] font-extrabold px-2 py-0.5 bg-blue-100 text-blue-800 rounded-full">
+                                2do Ciclo Secundaria
+                              </span>
+                            </div>
+                            <p className="text-xs text-slate-500 font-medium pl-6">
+                              Segundo ciclo de profundización en ciencias sociales, exactas y humanidades.
+                            </p>
+                          </div>
+
+                          <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-2xl space-y-1">
+                            <div className="flex items-center justify-between">
+                              <span className="font-extrabold text-sm text-[#17324D] flex items-center gap-2">
+                                <Check className="w-4 h-4 text-blue-600" />
+                                <span>3. Aprendizajes Especializados</span>
+                              </span>
+                              <span className="text-[10px] font-extrabold px-2 py-0.5 bg-blue-100 text-blue-800 rounded-full">
+                                Bachillerato Humanístico
+                              </span>
+                            </div>
+                            <p className="text-xs text-slate-500 font-medium pl-6">
+                              Ciclo culminante habilitante para el Título de Bachiller en Humanidades.
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-xs font-bold text-slate-500">
+                        <span>Total: 3 Etapas / Niveles oficiales</span>
+                        <button
+                          type="button"
+                          onClick={() => handleOpenAddEtapa('ESA')}
+                          className="h-8 px-3 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-xl font-bold flex items-center gap-1 transition-all"
+                        >
+                          <Plus className="w-3.5 h-3.5 text-[#00A651]" />
+                          <span>Gestionar ESA</span>
+                        </button>
+                      </div>
                     </div>
                   </div>
-                ))}
-              </div>
+                </div>
+              )}
+
+              {/* 2. SECCIÓN ETA (CARRERAS TÉCNICAS Y NIVELES) */}
+              {selectedTreeProgram === 'ETA' && (
+                <div className="space-y-4">
+                  {/* ALERTA DE REGLA INSTITUCIONAL ETA */}
+                  <div className="p-4 bg-amber-50 border border-amber-200 rounded-3xl text-xs text-amber-950 font-medium space-y-1.5">
+                    <div className="flex items-center gap-2 font-extrabold text-amber-900 text-sm">
+                      <Info className="w-4 h-4 text-amber-700 shrink-0" />
+                      <span>Regla Institucional: Organización de Educación Técnica Alternativa (ETA)</span>
+                    </div>
+                    <p>
+                      <strong>ETA NO utiliza etapas de aprendizaje</strong> como EPA o ESA. ETA trabaja exclusivamente mediante <strong>Carreras Técnicas</strong> y sus 3 niveles de certificación progresiva: <strong>Técnico Básico</strong>, <strong>Técnico Auxiliar</strong> y <strong>Técnico Medio</strong>.
+                    </p>
+                  </div>
+
+                  {/* Header con botón para añadir Carrera Técnica */}
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h4 className="font-extrabold text-base text-[#17324D]">Carreras Técnicas Oficiales</h4>
+                      <p className="text-xs text-slate-500 font-medium">Especialidades técnicas ofertadas en el CEA</p>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={handleOpenAddCarrera}
+                      id="btn-add-carrera-tecnica"
+                      className="h-10 px-4 bg-[#00A651] hover:bg-[#008f45] text-white font-extrabold text-xs rounded-2xl flex items-center gap-1.5 shadow-xs transition-all"
+                    >
+                      <Plus className="w-4 h-4 text-[#FFC845]" />
+                      <span>Añadir Carrera Técnica</span>
+                    </button>
+                  </div>
+
+                  {/* Carreras Grid */}
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                    {carreras.map(c => {
+                      const isSistemas = c.nombre.toLowerCase().includes('sistemas') || c.codigo === 'SIS';
+                      const isGastro = c.nombre.toLowerCase().includes('gastronom') || c.codigo === 'GAS';
+                      const Icon = isSistemas ? Laptop : isGastro ? Utensils : GraduationCap;
+
+                      return (
+                        <div key={c.id} className="p-5 bg-white rounded-3xl border border-slate-200 shadow-xs space-y-4 flex flex-col justify-between">
+                          <div className="space-y-3">
+                            <div className="flex items-start justify-between border-b border-slate-100 pb-3">
+                              <div className="flex items-center gap-3">
+                                <div className={`w-10 h-10 rounded-2xl flex items-center justify-center ${
+                                  isSistemas ? 'bg-blue-100 text-blue-700' : isGastro ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-700'
+                                }`}>
+                                  <Icon className="w-5 h-5" />
+                                </div>
+                                <div>
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-[10px] font-extrabold px-2 py-0.5 bg-[#17324D] text-white rounded-md">
+                                      {c.codigo || 'ETA'}
+                                    </span>
+                                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                                      c.activo ? 'bg-emerald-100 text-emerald-800 border-emerald-200' : 'bg-slate-100 text-slate-500 border-slate-200'
+                                    }`}>
+                                      {c.activo ? 'Activa' : 'Inactiva'}
+                                    </span>
+                                  </div>
+                                  <h4 className="font-extrabold text-base text-[#17324D] mt-0.5">{c.nombre}</h4>
+                                </div>
+                              </div>
+                            </div>
+
+                            <p className="text-xs text-slate-500 font-medium">
+                              {c.descripcion || 'Formación técnica con titulación laboral habilitante en el Estado Plurinacional.'}
+                            </p>
+
+                            {/* 3 Niveles de la Carrera */}
+                            <div className="space-y-2 pt-1">
+                              <span className="text-[11px] font-extrabold text-slate-400 uppercase tracking-wider block">
+                                Niveles de Titulación Oficial
+                              </span>
+
+                              <div className="p-3 bg-slate-50 border border-slate-200 rounded-2xl space-y-0.5">
+                                <div className="flex items-center justify-between">
+                                  <span className="font-bold text-xs text-[#17324D] flex items-center gap-1.5">
+                                    <span className="w-5 h-5 rounded-full bg-slate-200 text-slate-700 text-[10px] font-extrabold flex items-center justify-center">1</span>
+                                    <span>Técnico Básico</span>
+                                  </span>
+                                  <span className="text-[10px] font-bold text-slate-500 bg-white px-2 py-0.5 rounded-md border border-slate-200">
+                                    Nivel Inicial
+                                  </span>
+                                </div>
+                                <p className="text-[11px] text-slate-400 pl-6.5">Operación básica, fundamentos técnicos y competencias iniciales.</p>
+                              </div>
+
+                              <div className="p-3 bg-slate-50 border border-slate-200 rounded-2xl space-y-0.5">
+                                <div className="flex items-center justify-between">
+                                  <span className="font-bold text-xs text-[#17324D] flex items-center gap-1.5">
+                                    <span className="w-5 h-5 rounded-full bg-blue-100 text-blue-700 text-[10px] font-extrabold flex items-center justify-center">2</span>
+                                    <span>Técnico Auxiliar</span>
+                                  </span>
+                                  <span className="text-[10px] font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-md border border-blue-200">
+                                    Nivel Intermedio
+                                  </span>
+                                </div>
+                                <p className="text-[11px] text-slate-400 pl-6.5">Especialización práctica intermedia y ejecución de procedimientos.</p>
+                              </div>
+
+                              <div className="p-3 bg-emerald-50/60 border border-emerald-200 rounded-2xl space-y-0.5">
+                                <div className="flex items-center justify-between">
+                                  <span className="font-bold text-xs text-[#17324D] flex items-center gap-1.5">
+                                    <span className="w-5 h-5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-black flex items-center justify-center">3</span>
+                                    <span>Técnico Medio</span>
+                                  </span>
+                                  <span className="text-[10px] font-black text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded-md border border-emerald-300">
+                                    Título Profesional
+                                  </span>
+                                </div>
+                                <p className="text-[11px] text-emerald-700/80 pl-6.5 font-medium">
+                                  Grado profesional habilitante con resolución ministerial y título técnico.
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="pt-3 border-t border-slate-100 flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => handleOpenEditCarrera(c)}
+                              className="flex-1 h-9 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs rounded-xl flex items-center justify-center gap-1 transition-all"
+                            >
+                              <Pencil className="w-3.5 h-3.5 text-[#00A651]" />
+                              <span>Editar Carrera</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => handleToggleCarreraActive(c.id)}
+                              className={`px-3 h-9 rounded-xl font-bold text-xs flex items-center justify-center gap-1 transition-all ${
+                                c.activo
+                                  ? 'bg-red-50 hover:bg-red-100 text-red-700 border border-red-200'
+                                  : 'bg-emerald-50 hover:bg-emerald-100 text-[#00A651] border border-emerald-200'
+                              }`}
+                            >
+                              <Power className="w-3.5 h-3.5" />
+                              <span>{c.activo ? 'Desactivar' : 'Activar'}</span>
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* 3. SECCIÓN EDUPER */}
+              {selectedTreeProgram === 'EDUPER' && (
+                <div className="space-y-4">
+                  <div className="p-4 bg-amber-50/80 border border-amber-200 rounded-3xl text-xs text-amber-950 font-medium space-y-1">
+                    <div className="flex items-center gap-2 font-extrabold text-amber-900 text-sm">
+                      <BookOpen className="w-4 h-4 text-amber-700" />
+                      <span>EDUPER — Educación Permanente</span>
+                    </div>
+                    <p>
+                      Maneja procesos formativos comunitarios no escolarizados, cursos cortos de capacitación y talleres continuos para el desarrollo productivo y comunitario.
+                    </p>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div className="p-4 bg-white rounded-3xl border border-slate-200 shadow-xs space-y-2">
+                      <div className="w-8 h-8 rounded-xl bg-amber-100 text-amber-800 font-extrabold text-xs flex items-center justify-center">
+                        1
+                      </div>
+                      <h4 className="font-extrabold text-sm text-[#17324D]">Cursos de Capacitación</h4>
+                      <p className="text-xs text-slate-500 font-medium">Cursos modulares y específicos orientados a habilidades técnicas y laborales rápidas.</p>
+                    </div>
+
+                    <div className="p-4 bg-white rounded-3xl border border-slate-200 shadow-xs space-y-2">
+                      <div className="w-8 h-8 rounded-xl bg-amber-100 text-amber-800 font-extrabold text-xs flex items-center justify-center">
+                        2
+                      </div>
+                      <h4 className="font-extrabold text-sm text-[#17324D]">Talleres Comunitarios</h4>
+                      <p className="text-xs text-slate-500 font-medium">Espacios de formación práctica vivencial con participación de organizaciones sociales.</p>
+                    </div>
+
+                    <div className="p-4 bg-white rounded-3xl border border-slate-200 shadow-xs space-y-2">
+                      <div className="w-8 h-8 rounded-xl bg-amber-100 text-amber-800 font-extrabold text-xs flex items-center justify-center">
+                        3
+                      </div>
+                      <h4 className="font-extrabold text-sm text-[#17324D]">Procesos Formativos</h4>
+                      <p className="text-xs text-slate-500 font-medium">Programas permanentes de fortalecimiento sociocomunitario y productivo.</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* 4. SECCIÓN CEE */}
+              {selectedTreeProgram === 'CEE' && (
+                <div className="space-y-4">
+                  <div className="p-4 bg-purple-50/80 border border-purple-200 rounded-3xl text-xs text-purple-950 font-medium space-y-1">
+                    <div className="flex items-center gap-2 font-extrabold text-purple-900 text-sm">
+                      <Sparkles className="w-4 h-4 text-purple-700" />
+                      <span>CEE — Educación Especial</span>
+                    </div>
+                    <p>
+                      Atención educativa integral e inclusiva dirigida a personas con discapacidad, dificultades en el aprendizaje o talento extraordinario en modalidad directa e indirecta.
+                    </p>
+                  </div>
+
+                  <div className="p-5 bg-white rounded-3xl border border-slate-200 shadow-xs space-y-3">
+                    <h4 className="font-extrabold text-base text-[#17324D]">Modalidad y Adaptaciones Curriculares</h4>
+                    <p className="text-xs text-slate-600 font-medium">
+                      El Centro de Educación Alternativa implementa adaptaciones no significativas y significativas, garantizando el acceso a la formación técnica y humanística inclusiva con acompañamiento psicopedagógico.
+                    </p>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
-          {/* 2. SECTION ETAPAS */}
-          {academicCategory === 'etapas' && (
+          {/* VISTA 2: TABLAS Y REGISTROS DE BASE DE DATOS */}
+          {academicViewMode === 'tablas' && (
             <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="font-extrabold text-base text-[#17324D]">Etapas Educativas</h3>
-                  <p className="text-xs text-slate-500 font-medium">Ciclos o fases asociadas a programas</p>
-                </div>
-
-                <button
-                  onClick={handleOpenAddEtapa}
-                  id="btn-add-etapa"
-                  className="h-10 px-4 bg-[#00A651] hover:bg-[#008f45] text-white font-bold text-xs rounded-2xl flex items-center gap-1.5 shadow-xs transition-all"
-                >
-                  <Plus className="w-4 h-4 text-[#FFC845]" />
-                  <span>Añadir Etapa</span>
-                </button>
+              {/* Sub-selector for Database Tables */}
+              <div className="flex flex-wrap bg-slate-100 p-1 rounded-2xl border border-slate-200 gap-1">
+                {[
+                  { key: 'programas', label: `Programas (${programas.length})`, icon: GraduationCap },
+                  { key: 'subprogramas', label: `Subprogramas (${subprogramas.length})`, icon: FolderTree },
+                  { key: 'carreras', label: `Carreras Técnicas (${carreras.length})`, icon: Laptop },
+                  { key: 'etapas', label: `Etapas (${etapas.length})`, icon: BookOpen },
+                  { key: 'niveles', label: `Niveles (${niveles.length})`, icon: Layers },
+                ].map(tab => {
+                  const Icon = tab.icon;
+                  const isActive = academicCategory === tab.key;
+                  return (
+                    <button
+                      key={tab.key}
+                      type="button"
+                      onClick={() => setAcademicCategory(tab.key as any)}
+                      className={`flex-1 py-2 px-3 rounded-xl text-xs font-extrabold flex items-center justify-center gap-1.5 transition-all whitespace-nowrap ${
+                        isActive ? 'bg-[#17324D] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      <Icon className="w-3.5 h-3.5" />
+                      <span>{tab.label}</span>
+                    </button>
+                  );
+                })}
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {etapas.map(e => (
-                  <div key={e.id} className="p-4 bg-white rounded-3xl border border-slate-200 shadow-xs space-y-3 flex flex-col justify-between">
-                    <div className="space-y-1.5">
-                      <div className="flex justify-between items-center">
-                        <span className="bg-indigo-100 text-indigo-900 text-[10px] font-extrabold px-2.5 py-0.5 rounded-full border border-indigo-200">
-                          Programa: {e.programa_codigo || 'General'}
-                        </span>
-                        <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full border ${
-                          e.activo ? 'bg-emerald-100 text-emerald-800 border-emerald-300' : 'bg-slate-100 text-slate-500 border-slate-300'
-                        }`}>
-                          {e.activo ? 'Activo' : 'Inactivo'}
-                        </span>
-                      </div>
-                      <h4 className="font-extrabold text-base text-[#17324D]">{e.nombre}</h4>
-                      <p className="text-xs text-slate-500 font-medium">{e.descripcion || 'Sin descripción'}</p>
+              {/* TABLA PROGRAMAS */}
+              {academicCategory === 'programas' && (
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h4 className="font-extrabold text-base text-[#17324D]">Programas Principales</h4>
+                      <p className="text-xs text-slate-500 font-medium">EPJA, ETA, EDUPER, CEE</p>
                     </div>
-
-                    <div className="flex items-center gap-2 pt-2 border-t border-slate-100">
-                      <button
-                        onClick={() => handleOpenEditEtapa(e)}
-                        className="flex-1 h-9 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs rounded-xl flex items-center justify-center gap-1 transition-all"
-                      >
-                        <Pencil className="w-3.5 h-3.5 text-[#00A651]" />
-                        <span>Editar</span>
-                      </button>
-
-                      <button
-                        onClick={() => handleToggleEtapaActive(e.id)}
-                        className={`px-3 h-9 rounded-xl font-bold text-xs flex items-center justify-center gap-1 transition-all ${
-                          e.activo
-                            ? 'bg-red-50 hover:bg-red-100 text-red-700 border border-red-200'
-                            : 'bg-emerald-50 hover:bg-emerald-100 text-[#00A651] border border-emerald-200'
-                        }`}
-                      >
-                        <Power className="w-3.5 h-3.5" />
-                        <span>{e.activo ? 'Desactivar' : 'Activar'}</span>
-                      </button>
-                    </div>
+                    <button
+                      type="button"
+                      onClick={handleOpenAddPrograma}
+                      className="h-9 px-3 bg-[#00A651] text-white font-extrabold text-xs rounded-xl flex items-center gap-1 shadow-xs"
+                    >
+                      <Plus className="w-4 h-4 text-[#FFC845]" />
+                      <span>Nuevo Programa</span>
+                    </button>
                   </div>
-                ))}
-              </div>
-            </div>
-          )}
 
-          {/* 3. SECTION NIVELES */}
-          {academicCategory === 'niveles' && (
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="font-extrabold text-base text-[#17324D]">Niveles Educativos</h3>
-                  <p className="text-xs text-slate-500 font-medium">Elemental, Avanzado, Técnico Básico, Auxiliar, Medio, etc.</p>
-                </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {programas.map(p => (
+                      <div key={p.id} className="p-4 bg-white rounded-3xl border border-slate-200 shadow-xs space-y-3 flex flex-col justify-between">
+                        <div className="space-y-1.5">
+                          <div className="flex justify-between items-center">
+                            <span className="bg-[#17324D] text-white text-[11px] font-extrabold px-2.5 py-0.5 rounded-full">
+                              {p.codigo}
+                            </span>
+                            <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full border ${
+                              p.activo ? 'bg-emerald-100 text-emerald-800 border-emerald-300' : 'bg-slate-100 text-slate-500 border-slate-300'
+                            }`}>
+                              {p.activo ? 'Activo' : 'Inactivo'}
+                            </span>
+                          </div>
+                          <h4 className="font-extrabold text-base text-[#17324D]">{p.nombre}</h4>
+                          <p className="text-xs text-slate-500 font-medium">{p.descripcion || 'Sin descripción'}</p>
+                        </div>
 
-                <button
-                  onClick={handleOpenAddNivel}
-                  id="btn-add-nivel"
-                  className="h-10 px-4 bg-[#00A651] hover:bg-[#008f45] text-white font-bold text-xs rounded-2xl flex items-center gap-1.5 shadow-xs transition-all"
-                >
-                  <Plus className="w-4 h-4 text-[#FFC845]" />
-                  <span>Añadir Nivel</span>
-                </button>
-              </div>
+                        <div className="flex items-center gap-2 pt-2 border-t border-slate-100">
+                          <button
+                            type="button"
+                            onClick={() => handleOpenEditPrograma(p)}
+                            className="flex-1 h-9 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs rounded-xl flex items-center justify-center gap-1 transition-all"
+                          >
+                            <Pencil className="w-3.5 h-3.5 text-[#00A651]" />
+                            <span>Editar</span>
+                          </button>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {niveles.map(n => (
-                  <div key={n.id} className="p-4 bg-white rounded-3xl border border-slate-200 shadow-xs space-y-3 flex flex-col justify-between">
-                    <div className="space-y-1.5">
-                      <div className="flex justify-between items-center">
-                        <span className="bg-emerald-50 text-emerald-900 border border-emerald-200 text-[10px] font-extrabold px-2.5 py-0.5 rounded-full">
-                          {n.programa_codigo || 'EPA'} {n.etapa_nombre ? `• ${n.etapa_nombre}` : ''}
-                        </span>
-                        <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full border ${
-                          n.activo ? 'bg-emerald-100 text-emerald-800 border-emerald-300' : 'bg-slate-100 text-slate-500 border-slate-300'
-                        }`}>
-                          {n.activo ? 'Activo' : 'Inactivo'}
-                        </span>
+                          <button
+                            type="button"
+                            onClick={() => handleToggleProgramaActive(p.id)}
+                            className={`px-3 h-9 rounded-xl font-bold text-xs flex items-center justify-center gap-1 transition-all ${
+                              p.activo
+                                ? 'bg-red-50 hover:bg-red-100 text-red-700 border border-red-200'
+                                : 'bg-emerald-50 hover:bg-emerald-100 text-[#00A651] border border-emerald-200'
+                            }`}
+                          >
+                            <Power className="w-3.5 h-3.5" />
+                            <span>{p.activo ? 'Desactivar' : 'Activar'}</span>
+                          </button>
+                        </div>
                       </div>
-                      <h4 className="font-extrabold text-base text-[#17324D]">{n.nombre}</h4>
-                      <p className="text-xs text-slate-500 font-medium">{n.descripcion || 'Sin descripción'}</p>
-                    </div>
-
-                    <div className="flex items-center gap-2 pt-2 border-t border-slate-100">
-                      <button
-                        onClick={() => handleOpenEditNivel(n)}
-                        className="flex-1 h-9 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs rounded-xl flex items-center justify-center gap-1 transition-all"
-                      >
-                        <Pencil className="w-3.5 h-3.5 text-[#00A651]" />
-                        <span>Editar</span>
-                      </button>
-
-                      <button
-                        onClick={() => handleToggleNivelActive(n.id)}
-                        className={`px-3 h-9 rounded-xl font-bold text-xs flex items-center justify-center gap-1 transition-all ${
-                          n.activo
-                            ? 'bg-red-50 hover:bg-red-100 text-red-700 border border-red-200'
-                            : 'bg-emerald-50 hover:bg-emerald-100 text-[#00A651] border border-emerald-200'
-                        }`}
-                      >
-                        <Power className="w-3.5 h-3.5" />
-                        <span>{n.activo ? 'Desactivar' : 'Activar'}</span>
-                      </button>
-                    </div>
+                    ))}
                   </div>
-                ))}
-              </div>
+                </div>
+              )}
+
+              {/* TABLA SUBPROGRAMAS */}
+              {academicCategory === 'subprogramas' && (
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h4 className="font-extrabold text-base text-[#17324D]">Subprogramas (EPA, ESA)</h4>
+                      <p className="text-xs text-slate-500 font-medium">Divisiones humanísticas de EPJA</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleOpenAddSubprograma('EPJA')}
+                      className="h-9 px-3 bg-[#00A651] text-white font-extrabold text-xs rounded-xl flex items-center gap-1 shadow-xs"
+                    >
+                      <Plus className="w-4 h-4 text-[#FFC845]" />
+                      <span>Nuevo Subprograma</span>
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {subprogramas.map(s => (
+                      <div key={s.id} className="p-4 bg-white rounded-3xl border border-slate-200 shadow-xs space-y-3 flex flex-col justify-between">
+                        <div className="space-y-1.5">
+                          <div className="flex justify-between items-center">
+                            <span className="bg-emerald-100 text-emerald-900 text-[11px] font-extrabold px-2.5 py-0.5 rounded-full border border-emerald-200">
+                              {s.codigo} • Programa: {s.programa_codigo || 'EPJA'}
+                            </span>
+                            <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full border ${
+                              s.activo ? 'bg-emerald-100 text-emerald-800 border-emerald-300' : 'bg-slate-100 text-slate-500 border-slate-300'
+                            }`}>
+                              {s.activo ? 'Activo' : 'Inactivo'}
+                            </span>
+                          </div>
+                          <h4 className="font-extrabold text-base text-[#17324D]">{s.nombre}</h4>
+                          <p className="text-xs text-slate-500 font-medium">{s.descripcion || 'Sin descripción'}</p>
+                        </div>
+
+                        <div className="flex items-center gap-2 pt-2 border-t border-slate-100">
+                          <button
+                            type="button"
+                            onClick={() => handleOpenEditSubprograma(s)}
+                            className="flex-1 h-9 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs rounded-xl flex items-center justify-center gap-1 transition-all"
+                          >
+                            <Pencil className="w-3.5 h-3.5 text-[#00A651]" />
+                            <span>Editar</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => handleToggleSubprogramaActive(s.id)}
+                            className={`px-3 h-9 rounded-xl font-bold text-xs flex items-center justify-center gap-1 transition-all ${
+                              s.activo
+                                ? 'bg-red-50 hover:bg-red-100 text-red-700 border border-red-200'
+                                : 'bg-emerald-50 hover:bg-emerald-100 text-[#00A651] border border-emerald-200'
+                            }`}
+                          >
+                            <Power className="w-3.5 h-3.5" />
+                            <span>{s.activo ? 'Desactivar' : 'Activar'}</span>
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* TABLA CARRERAS TECNICAS */}
+              {academicCategory === 'carreras' && (
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h4 className="font-extrabold text-base text-[#17324D]">Carreras Técnicas de ETA</h4>
+                      <p className="text-xs text-slate-500 font-medium">Sistemas Informáticos, Gastronomía, etc.</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleOpenAddCarrera}
+                      className="h-9 px-3 bg-[#00A651] text-white font-extrabold text-xs rounded-xl flex items-center gap-1 shadow-xs"
+                    >
+                      <Plus className="w-4 h-4 text-[#FFC845]" />
+                      <span>Nueva Carrera</span>
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {carreras.map(c => (
+                      <div key={c.id} className="p-4 bg-white rounded-3xl border border-slate-200 shadow-xs space-y-3 flex flex-col justify-between">
+                        <div className="space-y-1.5">
+                          <div className="flex justify-between items-center">
+                            <span className="bg-blue-100 text-blue-900 text-[11px] font-extrabold px-2.5 py-0.5 rounded-full border border-blue-200">
+                              ETA • {c.codigo || 'TÉCNICA'}
+                            </span>
+                            <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full border ${
+                              c.activo ? 'bg-emerald-100 text-emerald-800 border-emerald-300' : 'bg-slate-100 text-slate-500 border-slate-300'
+                            }`}>
+                              {c.activo ? 'Activa' : 'Inactiva'}
+                            </span>
+                          </div>
+                          <h4 className="font-extrabold text-base text-[#17324D]">{c.nombre}</h4>
+                          <p className="text-xs text-slate-500 font-medium">{c.descripcion || 'Sin descripción'}</p>
+                        </div>
+
+                        <div className="flex items-center gap-2 pt-2 border-t border-slate-100">
+                          <button
+                            type="button"
+                            onClick={() => handleOpenEditCarrera(c)}
+                            className="flex-1 h-9 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs rounded-xl flex items-center justify-center gap-1 transition-all"
+                          >
+                            <Pencil className="w-3.5 h-3.5 text-[#00A651]" />
+                            <span>Editar</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => handleToggleCarreraActive(c.id)}
+                            className={`px-3 h-9 rounded-xl font-bold text-xs flex items-center justify-center gap-1 transition-all ${
+                              c.activo
+                                ? 'bg-red-50 hover:bg-red-100 text-red-700 border border-red-200'
+                                : 'bg-emerald-50 hover:bg-emerald-100 text-[#00A651] border border-emerald-200'
+                            }`}
+                          >
+                            <Power className="w-3.5 h-3.5" />
+                            <span>{c.activo ? 'Desactivar' : 'Activar'}</span>
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* TABLA ETAPAS */}
+              {academicCategory === 'etapas' && (
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h4 className="font-extrabold text-base text-[#17324D]">Etapas de Aprendizaje</h4>
+                      <p className="text-xs text-slate-500 font-medium">Elementales, Avanzados, Aplicados, Complementarios, Especializados</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleOpenAddEtapa('EPA')}
+                      className="h-9 px-3 bg-[#00A651] text-white font-extrabold text-xs rounded-xl flex items-center gap-1 shadow-xs"
+                    >
+                      <Plus className="w-4 h-4 text-[#FFC845]" />
+                      <span>Nueva Etapa</span>
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {etapas.map(e => (
+                      <div key={e.id} className="p-4 bg-white rounded-3xl border border-slate-200 shadow-xs space-y-3 flex flex-col justify-between">
+                        <div className="space-y-1.5">
+                          <div className="flex justify-between items-center">
+                            <span className="bg-indigo-100 text-indigo-900 text-[10px] font-extrabold px-2.5 py-0.5 rounded-full border border-indigo-200">
+                              {e.subprograma_codigo ? `Subprog: ${e.subprograma_codigo}` : `Prog: ${e.programa_codigo || 'EPJA'}`}
+                            </span>
+                            <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full border ${
+                              e.activo ? 'bg-emerald-100 text-emerald-800 border-emerald-300' : 'bg-slate-100 text-slate-500 border-slate-300'
+                            }`}>
+                              {e.activo ? 'Activo' : 'Inactivo'}
+                            </span>
+                          </div>
+                          <h4 className="font-extrabold text-base text-[#17324D]">{e.nombre}</h4>
+                          <p className="text-xs text-slate-500 font-medium">{e.descripcion || 'Sin descripción'}</p>
+                        </div>
+
+                        <div className="flex items-center gap-2 pt-2 border-t border-slate-100">
+                          <button
+                            type="button"
+                            onClick={() => handleOpenEditEtapa(e)}
+                            className="flex-1 h-9 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs rounded-xl flex items-center justify-center gap-1 transition-all"
+                          >
+                            <Pencil className="w-3.5 h-3.5 text-[#00A651]" />
+                            <span>Editar</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => handleToggleEtapaActive(e.id)}
+                            className={`px-3 h-9 rounded-xl font-bold text-xs flex items-center justify-center gap-1 transition-all ${
+                              e.activo
+                                ? 'bg-red-50 hover:bg-red-100 text-red-700 border border-red-200'
+                                : 'bg-emerald-50 hover:bg-emerald-100 text-[#00A651] border border-emerald-200'
+                            }`}
+                          >
+                            <Power className="w-3.5 h-3.5" />
+                            <span>{e.activo ? 'Desactivar' : 'Activar'}</span>
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* TABLA NIVELES */}
+              {academicCategory === 'niveles' && (
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h4 className="font-extrabold text-base text-[#17324D]">Niveles Educativos y de Titulación</h4>
+                      <p className="text-xs text-slate-500 font-medium">Niveles EPA/ESA y Técnico Básico, Auxiliar, Medio de ETA</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleOpenAddNivel()}
+                      className="h-9 px-3 bg-[#00A651] text-white font-extrabold text-xs rounded-xl flex items-center gap-1 shadow-xs"
+                    >
+                      <Plus className="w-4 h-4 text-[#FFC845]" />
+                      <span>Nuevo Nivel</span>
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {niveles.map(n => (
+                      <div key={n.id} className="p-4 bg-white rounded-3xl border border-slate-200 shadow-xs space-y-3 flex flex-col justify-between">
+                        <div className="space-y-1.5">
+                          <div className="flex justify-between items-center">
+                            <span className="bg-emerald-50 text-emerald-900 border border-emerald-200 text-[10px] font-extrabold px-2.5 py-0.5 rounded-full">
+                              {n.carrera_nombre ? `Carrera: ${n.carrera_nombre}` : n.subprograma_codigo ? `Subprog: ${n.subprograma_codigo}` : n.programa_codigo || 'EPJA'}
+                            </span>
+                            <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full border ${
+                              n.activo ? 'bg-emerald-100 text-emerald-800 border-emerald-300' : 'bg-slate-100 text-slate-500 border-slate-300'
+                            }`}>
+                              {n.activo ? 'Activo' : 'Inactivo'}
+                            </span>
+                          </div>
+                          <h4 className="font-extrabold text-base text-[#17324D]">{n.nombre}</h4>
+                          <p className="text-xs text-slate-500 font-medium">{n.descripcion || 'Sin descripción'}</p>
+                        </div>
+
+                        <div className="flex items-center gap-2 pt-2 border-t border-slate-100">
+                          <button
+                            type="button"
+                            onClick={() => handleOpenEditNivel(n)}
+                            className="flex-1 h-9 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs rounded-xl flex items-center justify-center gap-1 transition-all"
+                          >
+                            <Pencil className="w-3.5 h-3.5 text-[#00A651]" />
+                            <span>Editar</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => handleToggleNivelActive(n.id)}
+                            className={`px-3 h-9 rounded-xl font-bold text-xs flex items-center justify-center gap-1 transition-all ${
+                              n.activo
+                                ? 'bg-red-50 hover:bg-red-100 text-red-700 border border-red-200'
+                                : 'bg-emerald-50 hover:bg-emerald-100 text-[#00A651] border border-emerald-200'
+                            }`}
+                          >
+                            <Power className="w-3.5 h-3.5" />
+                            <span>{n.activo ? 'Desactivar' : 'Activar'}</span>
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -1346,6 +2224,163 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         </div>
       )}
 
+      {/* MODAL SUBPROGRAMAS (EPA, ESA) */}
+      {isSubprogramaModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-4 animate-fade-in">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <h3 className="font-extrabold text-lg text-[#17324D]">
+                {editingSubprograma ? 'Editar Subprograma' : 'Añadir Nuevo Subprograma'}
+              </h3>
+              <button
+                type="button"
+                onClick={() => setIsSubprogramaModalOpen(false)}
+                className="p-1 rounded-xl text-slate-400 hover:text-slate-600 hover:bg-slate-100"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveSubprograma} className="space-y-3 text-xs font-bold">
+              <div>
+                <label className="block text-slate-700 mb-1">Código / Sigla *</label>
+                <input
+                  type="text"
+                  placeholder="Ej. EPA, ESA"
+                  value={subprogForm.codigo}
+                  onChange={e => setSubprogForm({ ...subprogForm, codigo: e.target.value })}
+                  className="w-full h-11 px-3 bg-slate-50 border border-slate-300 rounded-xl outline-none uppercase font-extrabold text-slate-900"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-slate-700 mb-1">Nombre Oficial del Subprograma *</label>
+                <input
+                  type="text"
+                  placeholder="Ej. Educación Primaria de Adultos"
+                  value={subprogForm.nombre}
+                  onChange={e => setSubprogForm({ ...subprogForm, nombre: e.target.value })}
+                  className="w-full h-11 px-3 bg-slate-50 border border-slate-300 rounded-xl outline-none font-medium text-slate-900"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-slate-700 mb-1">Programa Padre</label>
+                <select
+                  value={subprogForm.programa_codigo}
+                  onChange={e => setSubprogForm({ ...subprogForm, programa_codigo: e.target.value })}
+                  className="w-full h-11 px-3 bg-slate-50 border border-slate-300 rounded-xl outline-none font-medium text-slate-900"
+                >
+                  <option value="EPJA">EPJA – Educación de Personas Jóvenes y Adultas</option>
+                  {programas.filter(p => p.codigo !== 'EPJA').map(p => (
+                    <option key={p.id} value={p.codigo}>{p.codigo} – {p.nombre}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-slate-700 mb-1">Descripción</label>
+                <textarea
+                  placeholder="Alcance del subprograma..."
+                  value={subprogForm.descripcion}
+                  onChange={e => setSubprogForm({ ...subprogForm, descripcion: e.target.value })}
+                  className="w-full h-20 p-3 bg-slate-50 border border-slate-300 rounded-xl outline-none font-medium text-slate-900 resize-none"
+                />
+              </div>
+
+              <div className="pt-2 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsSubprogramaModalOpen(false)}
+                  className="h-11 px-4 bg-slate-100 text-slate-700 font-bold rounded-xl"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="h-11 px-5 bg-[#00A651] hover:bg-[#008f45] text-white font-extrabold rounded-xl shadow-xs"
+                >
+                  Guardar Subprograma
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL CARRERAS TÉCNICAS (ETA) */}
+      {isCarreraModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-4 animate-fade-in">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <h3 className="font-extrabold text-lg text-[#17324D]">
+                {editingCarrera ? 'Editar Carrera Técnica' : 'Añadir Carrera Técnica a ETA'}
+              </h3>
+              <button
+                type="button"
+                onClick={() => setIsCarreraModalOpen(false)}
+                className="p-1 rounded-xl text-slate-400 hover:text-slate-600 hover:bg-slate-100"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveCarrera} className="space-y-3 text-xs font-bold">
+              <div>
+                <label className="block text-slate-700 mb-1">Nombre de la Especialidad / Carrera *</label>
+                <input
+                  type="text"
+                  placeholder="Ej. Sistemas Informáticos, Gastronomía..."
+                  value={carreraForm.nombre}
+                  onChange={e => setCarreraForm({ ...carreraForm, nombre: e.target.value })}
+                  className="w-full h-11 px-3 bg-slate-50 border border-slate-300 rounded-xl outline-none font-medium text-slate-900"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-slate-700 mb-1">Código / Sigla Técnica</label>
+                <input
+                  type="text"
+                  placeholder="Ej. SIS, GAS, BEL, ELE"
+                  value={carreraForm.codigo}
+                  onChange={e => setCarreraForm({ ...carreraForm, codigo: e.target.value })}
+                  className="w-full h-11 px-3 bg-slate-50 border border-slate-300 rounded-xl outline-none uppercase font-extrabold text-slate-900"
+                />
+              </div>
+
+              <div>
+                <label className="block text-slate-700 mb-1">Descripción de la Carrera</label>
+                <textarea
+                  placeholder="Perfil profesional y formación técnica de la especialidad..."
+                  value={carreraForm.descripcion}
+                  onChange={e => setCarreraForm({ ...carreraForm, descripcion: e.target.value })}
+                  className="w-full h-20 p-3 bg-slate-50 border border-slate-300 rounded-xl outline-none font-medium text-slate-900 resize-none"
+                />
+              </div>
+
+              <div className="pt-2 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsCarreraModalOpen(false)}
+                  className="h-11 px-4 bg-slate-100 text-slate-700 font-bold rounded-xl"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="h-11 px-5 bg-[#00A651] hover:bg-[#008f45] text-white font-extrabold rounded-xl shadow-xs"
+                >
+                  Guardar Carrera
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* MODAL ETAPAS */}
       {isEtapaModalOpen && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
@@ -1355,6 +2390,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 {editingEtapa ? 'Editar Etapa Educativa' : 'Añadir Nueva Etapa'}
               </h3>
               <button
+                type="button"
                 onClick={() => setIsEtapaModalOpen(false)}
                 className="p-1 rounded-xl text-slate-400 hover:text-slate-600 hover:bg-slate-100"
               >
@@ -1367,7 +2403,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 <label className="block text-slate-700 mb-1">Nombre de la Etapa *</label>
                 <input
                   type="text"
-                  placeholder="Ej. Aprendizajes Elementales"
+                  placeholder="Ej. Aprendizajes Elementales, Avanzados, Aplicados..."
                   value={etapaForm.nombre}
                   onChange={e => setEtapaForm({ ...etapaForm, nombre: e.target.value })}
                   className="w-full h-11 px-3 bg-slate-50 border border-slate-300 rounded-xl outline-none font-medium text-slate-900"
@@ -1375,17 +2411,32 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 />
               </div>
 
-              <div>
-                <label className="block text-slate-700 mb-1">Programa Asociado *</label>
-                <select
-                  value={etapaForm.programa_codigo}
-                  onChange={e => setEtapaForm({ ...etapaForm, programa_codigo: e.target.value })}
-                  className="w-full h-11 px-3 bg-slate-50 border border-slate-300 rounded-xl outline-none font-medium text-slate-900"
-                >
-                  {programas.map(p => (
-                    <option key={p.id} value={p.codigo}>{p.codigo} – {p.nombre}</option>
-                  ))}
-                </select>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-slate-700 mb-1">Programa</label>
+                  <select
+                    value={etapaForm.programa_codigo}
+                    onChange={e => setEtapaForm({ ...etapaForm, programa_codigo: e.target.value })}
+                    className="w-full h-11 px-3 bg-slate-50 border border-slate-300 rounded-xl outline-none font-medium text-slate-900"
+                  >
+                    {programas.map(p => (
+                      <option key={p.id} value={p.codigo}>{p.codigo} – {p.nombre}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-slate-700 mb-1">Subprograma</label>
+                  <select
+                    value={etapaForm.subprograma_codigo}
+                    onChange={e => setEtapaForm({ ...etapaForm, subprograma_codigo: e.target.value })}
+                    className="w-full h-11 px-3 bg-slate-50 border border-slate-300 rounded-xl outline-none font-medium text-slate-900"
+                  >
+                    <option value="">(Ninguno)</option>
+                    <option value="EPA">EPA – Primaria Adultos</option>
+                    <option value="ESA">ESA – Secundaria Adultos</option>
+                  </select>
+                </div>
               </div>
 
               <div>
@@ -1427,6 +2478,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 {editingNivel ? 'Editar Nivel Educativo' : 'Añadir Nuevo Nivel'}
               </h3>
               <button
+                type="button"
                 onClick={() => setIsNivelModalOpen(false)}
                 className="p-1 rounded-xl text-slate-400 hover:text-slate-600 hover:bg-slate-100"
               >
@@ -1447,24 +2499,55 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 />
               </div>
 
-              <div>
-                <label className="block text-slate-700 mb-1">Programa Asociado *</label>
-                <select
-                  value={nivelForm.programa_codigo}
-                  onChange={e => setNivelForm({ ...nivelForm, programa_codigo: e.target.value })}
-                  className="w-full h-11 px-3 bg-slate-50 border border-slate-300 rounded-xl outline-none font-medium text-slate-900"
-                >
-                  {programas.map(p => (
-                    <option key={p.id} value={p.codigo}>{p.codigo} – {p.nombre}</option>
-                  ))}
-                </select>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-slate-700 mb-1">Programa</label>
+                  <select
+                    value={nivelForm.programa_codigo}
+                    onChange={e => setNivelForm({ ...nivelForm, programa_codigo: e.target.value })}
+                    className="w-full h-11 px-3 bg-slate-50 border border-slate-300 rounded-xl outline-none font-medium text-slate-900"
+                  >
+                    {programas.map(p => (
+                      <option key={p.id} value={p.codigo}>{p.codigo} – {p.nombre}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-slate-700 mb-1">Subprograma</label>
+                  <select
+                    value={nivelForm.subprograma_codigo}
+                    onChange={e => setNivelForm({ ...nivelForm, subprograma_codigo: e.target.value })}
+                    className="w-full h-11 px-3 bg-slate-50 border border-slate-300 rounded-xl outline-none font-medium text-slate-900"
+                  >
+                    <option value="">(Ninguno)</option>
+                    <option value="EPA">EPA – Primaria Adultos</option>
+                    <option value="ESA">ESA – Secundaria Adultos</option>
+                  </select>
+                </div>
               </div>
+
+              {nivelForm.programa_codigo === 'ETA' && (
+                <div>
+                  <label className="block text-slate-700 mb-1">Carrera Técnica (ETA)</label>
+                  <select
+                    value={nivelForm.carrera_nombre}
+                    onChange={e => setNivelForm({ ...nivelForm, carrera_nombre: e.target.value })}
+                    className="w-full h-11 px-3 bg-slate-50 border border-slate-300 rounded-xl outline-none font-medium text-slate-900"
+                  >
+                    <option value="">(Nivel Técnico General)</option>
+                    {carreras.map(c => (
+                      <option key={c.id} value={c.nombre}>{c.nombre}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
 
               <div>
                 <label className="block text-slate-700 mb-1">Etapa Referencial</label>
                 <input
                   type="text"
-                  placeholder="Ej. Aprendizajes Elementales"
+                  placeholder="Ej. Aprendizajes Elementales, Ciclo Técnico..."
                   value={nivelForm.etapa_nombre}
                   onChange={e => setNivelForm({ ...nivelForm, etapa_nombre: e.target.value })}
                   className="w-full h-11 px-3 bg-slate-50 border border-slate-300 rounded-xl outline-none font-medium text-slate-900"

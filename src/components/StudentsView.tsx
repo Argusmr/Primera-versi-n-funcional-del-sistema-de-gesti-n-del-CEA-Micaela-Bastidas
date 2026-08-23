@@ -181,7 +181,8 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
 
         (data || []).forEach((asig: any) => {
           const g = asig.grupos;
-          if (g && g.activo !== false && !seen.has(g.id)) {
+          const isAsigActive = asig.activo !== false && asig.estado !== 'inactivo';
+          if (isAsigActive && g && g.activo !== false && !seen.has(g.id)) {
             seen.add(g.id);
             list.push({
               id: g.id,
