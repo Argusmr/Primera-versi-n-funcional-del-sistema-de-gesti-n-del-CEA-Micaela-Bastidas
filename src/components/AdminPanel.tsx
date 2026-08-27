@@ -24,7 +24,9 @@ import {
   Info,
   Check,
   ChevronRight,
-  ArrowRight
+  ArrowRight,
+  Edit3,
+  Trash2
 } from 'lucide-react';
 import { Perfil, Sede, Horario, Programa, Subprograma, CarreraTecnica, Etapa, NivelEducativo, DatosInstitucionales } from '../types';
 import { INITIAL_SEDES, INITIAL_HORARIOS } from '../lib/mockData';
@@ -81,6 +83,32 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const [horariosError, setHorariosError] = useState<string | null>(null);
   const [temporadaInstitucional, setTemporadaInstitucionalState] = useState<TemporadaInstitucional>('verano');
   const [isChangingTemporada, setIsChangingTemporada] = useState<boolean>(false);
+  
+  // Horario CRUD states
+  const [isHorarioModalOpen, setIsHorarioModalOpen] = useState<boolean>(false);
+  const [editingHorario, setEditingHorario] = useState<Horario | null>(null);
+  const [horarioModalError, setHorarioModalError] = useState<string | null>(null);
+  const [isSavingHorario, setIsSavingHorario] = useState<boolean>(false);
+  const [horarioForm, setHorarioForm] = useState<{
+    nombre: string;
+    sede_id: string;
+    es_invierno: boolean;
+    dias_semana: string[];
+    hora_ingreso: string;
+    tolerancia_hasta: string;
+    hora_salida: string;
+    activo: boolean;
+  }>({
+    nombre: '',
+    sede_id: '',
+    es_invierno: false,
+    dias_semana: ['lunes', 'martes', 'miércoles', 'jueves', 'viernes'],
+    hora_ingreso: '18:30',
+    tolerancia_hasta: '18:40',
+    hora_salida: '22:00',
+    activo: true,
+  });
+
   const [sedes, setSedes] = useState<Sede[]>([]);
   const [loadingSedes, setLoadingSedes] = useState<boolean>(false);
   const [sedesError, setSedesError] = useState<string | null>(null);
@@ -993,6 +1021,208 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       setSedes(updated);
       setIsSavingSede(false);
       setIsSedeModalOpen(false);
+    }
+  };
+
+  /* ================= HORARIOS CRUD ================= */
+  const handleOpenCreateHorario = () => {
+    setEditingHorario(null);
+    setHorarioModalError(null);
+    const defaultSedeId = sedes.length > 0 ? sedes[0].id : '';
+    setHorarioForm({
+      nombre: '',
+      sede_id: defaultSedeId,
+      es_invierno: false,
+      dias_semana: ['lunes', 'martes', 'miércoles', 'jueves', 'viernes'],
+      hora_ingreso: '18:30',
+      tolerancia_hasta: '18:40',
+      hora_salida: '22:00',
+      activo: true,
+    });
+    setIsHorarioModalOpen(true);
+  };
+
+  const handleOpenEditHorario = (h: Horario) => {
+    setEditingHorario(h);
+    setHorarioModalError(null);
+    setHorarioForm({
+      nombre: h.nombre,
+      sede_id: h.sede_id,
+      es_invierno: Boolean(h.es_invierno),
+      dias_semana: Array.isArray(h.dias_semana) && h.dias_semana.length > 0
+        ? h.dias_semana
+        : ['lunes', 'martes', 'miércoles', 'jueves', 'viernes'],
+      hora_ingreso: h.hora_ingreso || '18:30',
+      tolerancia_hasta: h.tolerancia_hasta || '18:40',
+      hora_salida: h.hora_salida || '22:00',
+      activo: h.activo !== false,
+    });
+    setIsHorarioModalOpen(true);
+  };
+
+  const handleToggleDiaSemana = (dia: string) => {
+    const norm = dia.toLowerCase();
+    const current = horarioForm.dias_semana || [];
+    if (current.includes(norm)) {
+      if (current.length === 1) {
+        setHorarioModalError('El horario debe tener al menos un día aplicable asignado.');
+        return;
+      }
+      setHorarioForm({ ...horarioForm, dias_semana: current.filter(d => d !== norm) });
+    } else {
+      setHorarioForm({ ...horarioForm, dias_semana: [...current, norm] });
+    }
+  };
+
+  const handleSaveHorario = async (ev: React.FormEvent) => {
+    ev.preventDefault();
+    setHorarioModalError(null);
+
+    // 1. Validaciones
+    if (!horarioForm.sede_id) {
+      setHorarioModalError('Debe seleccionar una sede educativa obligatoriamente.');
+      return;
+    }
+
+    if (!horarioForm.nombre.trim()) {
+      setHorarioModalError('El nombre descriptivo del horario es obligatorio.');
+      return;
+    }
+
+    if (!horarioForm.dias_semana || horarioForm.dias_semana.length === 0) {
+      setHorarioModalError('Debe seleccionar al menos un día de la semana aplicable.');
+      return;
+    }
+
+    if (horarioForm.hora_salida <= horarioForm.hora_ingreso) {
+      setHorarioModalError('La hora de salida debe ser posterior a la hora de ingreso.');
+      return;
+    }
+
+    if (horarioForm.tolerancia_hasta < horarioForm.hora_ingreso || horarioForm.tolerancia_hasta > horarioForm.hora_salida) {
+      setHorarioModalError('La hora de tolerancia debe estar comprendida entre la hora de ingreso y la hora de salida.');
+      return;
+    }
+
+    // Validar duplicidad de horario de invierno para la misma sede con solapamiento de días
+    if (horarioForm.es_invierno) {
+      const existingDuplicate = horarios.find(h => {
+        if (editingHorario && h.id === editingHorario.id) return false;
+        if (h.sede_id !== horarioForm.sede_id) return false;
+        if (!h.es_invierno || !h.activo) return false;
+        const diasTarget = (h.dias_semana || []).map(d => d.toLowerCase());
+        return horarioForm.dias_semana.some(d => diasTarget.includes(d.toLowerCase()));
+      });
+
+      if (existingDuplicate) {
+        setHorarioModalError(`Ya existe un Horario de Invierno activo para esta sede con días coincidentes (${existingDuplicate.nombre}).`);
+        return;
+      }
+    }
+
+    setIsSavingHorario(true);
+
+    const payload = {
+      nombre: horarioForm.nombre.trim(),
+      sede_id: horarioForm.sede_id,
+      es_invierno: horarioForm.es_invierno,
+      dias_semana: horarioForm.dias_semana,
+      hora_ingreso: horarioForm.hora_ingreso,
+      tolerancia_hasta: horarioForm.tolerancia_hasta,
+      hora_salida: horarioForm.hora_salida,
+      activo: horarioForm.activo,
+    };
+
+    if (isSupabaseConfigured && supabase) {
+      try {
+        if (editingHorario) {
+          const { error } = await supabase
+            .from('horarios')
+            .update({
+              ...payload,
+              updated_at: new Date().toISOString()
+            })
+            .eq('id', editingHorario.id);
+
+          if (error) {
+            console.error('Error al actualizar horario en Supabase:', error);
+            setHorarioModalError(`Error de Supabase: ${error.message}`);
+            setIsSavingHorario(false);
+            return;
+          }
+        } else {
+          const { error } = await supabase
+            .from('horarios')
+            .insert(payload);
+
+          if (error) {
+            console.error('Error al crear horario en Supabase:', error);
+            setHorarioModalError(`Error de Supabase: ${error.message}`);
+            setIsSavingHorario(false);
+            return;
+          }
+        }
+
+        await fetchHorarios();
+        showNotification(`Horario "${horarioForm.nombre}" guardado correctamente en Supabase.`);
+        setIsHorarioModalOpen(false);
+      } catch (err: any) {
+        setHorarioModalError(err.message || 'Error inesperado al guardar el horario');
+      } finally {
+        setIsSavingHorario(false);
+      }
+    } else {
+      const sedeSeleccionada = sedes.find(s => s.id === horarioForm.sede_id);
+      let updated: Horario[];
+      if (editingHorario) {
+        updated = horarios.map(h =>
+          h.id === editingHorario.id
+            ? { ...h, ...payload, sede_nombre: sedeSeleccionada?.nombre || h.sede_nombre }
+            : h
+        );
+        showNotification(`Horario "${horarioForm.nombre}" actualizado localmente.`);
+      } else {
+        const newH: Horario = {
+          id: `hor-${Date.now()}`,
+          ...payload,
+          sede_nombre: sedeSeleccionada?.nombre || 'Sede Seleccionada',
+        };
+        updated = [...horarios, newH];
+        showNotification(`Horario "${newH.nombre}" creado localmente.`);
+      }
+      setHorarios(updated);
+      setIsSavingHorario(false);
+      setIsHorarioModalOpen(false);
+    }
+  };
+
+  const handleDeleteHorario = async (horarioId: string) => {
+    const target = horarios.find(h => h.id === horarioId);
+    if (!target) return;
+
+    if (!window.confirm(`¿Está seguro de eliminar el horario "${target.nombre}"?`)) {
+      return;
+    }
+
+    if (isSupabaseConfigured && supabase) {
+      try {
+        const { error } = await supabase
+          .from('horarios')
+          .delete()
+          .eq('id', horarioId);
+
+        if (error) {
+          showNotification('Error al eliminar horario en Supabase: ' + error.message);
+          return;
+        }
+        await fetchHorarios();
+        showNotification(`Horario "${target.nombre}" eliminado correctamente.`);
+      } catch (e: any) {
+        showNotification('Error inesperado al eliminar horario: ' + e.message);
+      }
+    } else {
+      setHorarios(prev => prev.filter(h => h.id !== horarioId));
+      showNotification(`Horario "${target.nombre}" eliminado localmente.`);
     }
   };
 
@@ -2057,7 +2287,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           <div className="flex items-center justify-between">
             <div>
               <h3 className="font-extrabold text-base text-[#17324D]">Horarios Institucionales</h3>
-              <p className="text-xs text-slate-500 font-medium">Horas de ingreso, tolerancia y salida por sede</p>
+              <p className="text-xs text-slate-500 font-medium">Gestión de horarios por sede, temporada y días aplicables</p>
             </div>
             <div className="flex items-center gap-2">
               <button
@@ -2069,7 +2299,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 <RefreshCw className={`w-3.5 h-3.5 text-slate-600 ${loadingHorarios ? 'animate-spin' : ''}`} />
                 <span>Actualizar</span>
               </button>
-              <button className="h-9 px-3 bg-[#00A651] text-white font-bold text-xs rounded-xl flex items-center gap-1">
+              <button
+                onClick={handleOpenCreateHorario}
+                className="h-9 px-3 bg-[#00A651] hover:bg-[#008f45] text-white font-bold text-xs rounded-xl flex items-center gap-1.5 shadow-xs transition-all"
+              >
                 <Plus className="w-4 h-4" /> <span>Nuevo Horario</span>
               </button>
             </div>
@@ -2090,61 +2323,111 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           ) : horarios.length === 0 ? (
             <div className="p-10 text-center text-slate-500 bg-white rounded-3xl border border-slate-200 space-y-2">
               <Clock className="w-10 h-10 text-slate-300 mx-auto" />
-              <p className="font-bold text-sm text-slate-700">No hay horarios registrados en Supabase.</p>
+              <p className="font-bold text-sm text-slate-700">No hay horarios registrados.</p>
               <p className="text-xs text-slate-400">
-                Los horarios configurados en public.horarios se mostrarán en esta lista.
+                Haga clic en "+ Nuevo Horario" para crear la primera configuración de horario por sede.
               </p>
             </div>
           ) : (
             <div className="space-y-3">
-              {horarios.map(h => (
-                <div key={h.id} className="p-5 bg-white rounded-3xl border border-slate-200 shadow-xs space-y-3">
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <span className="text-[10px] font-bold text-emerald-800 bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-200">
-                        {h.sede_nombre}
-                      </span>
-                      <h4 className="font-extrabold text-[#17324D] text-base mt-1">{h.nombre}</h4>
-                    </div>
-                    {h.es_invierno && (
-                      <span className="bg-blue-100 text-blue-900 border border-blue-300 text-[10px] font-bold px-2 py-0.5 rounded-full">
-                        Horario Invierno Activo
-                      </span>
-                    )}
-                  </div>
+              {/* Tabla de Horarios Institucionales */}
+              <div className="bg-white rounded-3xl border border-slate-200 shadow-xs overflow-hidden">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse text-xs">
+                    <thead>
+                      <tr className="border-b border-slate-100 bg-slate-50/75 text-slate-500 font-bold uppercase text-[10px] tracking-wider">
+                        <th className="py-3 px-4">Sede</th>
+                        <th className="py-3 px-4">Nombre / Horario</th>
+                        <th className="py-3 px-3 text-center">Temporada</th>
+                        <th className="py-3 px-3">Días Aplicables</th>
+                        <th className="py-3 px-3 text-center">Ingreso</th>
+                        <th className="py-3 px-3 text-center">Tolerancia</th>
+                        <th className="py-3 px-3 text-center">Salida</th>
+                        <th className="py-3 px-3 text-center">Estado</th>
+                        <th className="py-3 px-4 text-right">Acciones</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
+                      {horarios.map(h => {
+                        const diasText = Array.isArray(h.dias_semana) && h.dias_semana.length > 0
+                          ? h.dias_semana.map(d => d.slice(0, 3).toUpperCase()).join(', ')
+                          : 'Lun-Vie';
 
-                  <div className="grid grid-cols-3 gap-2 p-3 bg-slate-50 rounded-2xl border border-slate-200 text-center text-xs">
-                    <div>
-                      <span className="text-[10px] font-bold text-slate-400 block uppercase">Ingreso</span>
-                      <strong className="text-base text-[#00A651]">{h.hora_ingreso}</strong>
-                    </div>
-                    <div>
-                      <span className="text-[10px] font-bold text-slate-400 block uppercase">Tolerancia</span>
-                      <strong className="text-base text-slate-700">{h.tolerancia_hasta}</strong>
-                    </div>
-                    <div>
-                      <span className="text-[10px] font-bold text-slate-400 block uppercase">Salida</span>
-                      <strong className="text-base text-[#17324D]">{h.hora_salida}</strong>
-                    </div>
-                  </div>
-
-                  <button
-                    onClick={() => handleToggleInvierno(h.id)}
-                    className={`w-full h-11 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all ${
-                      h.es_invierno
-                        ? 'bg-amber-100 text-amber-950 border border-amber-300 hover:bg-amber-200'
-                        : 'bg-blue-50 text-blue-900 border border-blue-200 hover:bg-blue-100'
-                    }`}
-                  >
-                    <Clock className="w-4 h-4" />
-                    <span>
-                      {h.es_invierno
-                        ? `Desactivar Horario de Invierno (Restablecer salida regular ${ajustarHoraSalida(h.hora_salida, 30)})`
-                        : `Activar Horario de Invierno (Salida anticipada ${ajustarHoraSalida(h.hora_salida, -30)})`}
-                    </span>
-                  </button>
+                        return (
+                          <tr key={h.id} className="hover:bg-slate-50/50 transition-colors">
+                            <td className="py-3.5 px-4 font-bold text-[#17324D] whitespace-nowrap">
+                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-extrabold bg-slate-100 text-slate-800 border border-slate-200">
+                                {h.sede_nombre || 'Sede General'}
+                              </span>
+                            </td>
+                            <td className="py-3.5 px-4 font-bold text-slate-900">
+                              {h.nombre}
+                            </td>
+                            <td className="py-3.5 px-3 text-center whitespace-nowrap">
+                              {h.es_invierno ? (
+                                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-blue-50 text-blue-900 border border-blue-200">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
+                                  Invierno
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-emerald-50 text-emerald-900 border border-emerald-200">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                                  Regular
+                                </span>
+                              )}
+                            </td>
+                            <td className="py-3.5 px-3 whitespace-nowrap">
+                              <span className="font-semibold text-slate-600 bg-slate-100 px-2 py-0.5 rounded-md text-[11px]">
+                                {diasText}
+                              </span>
+                            </td>
+                            <td className="py-3.5 px-3 text-center whitespace-nowrap font-black text-[#00A651]">
+                              {h.hora_ingreso}
+                            </td>
+                            <td className="py-3.5 px-3 text-center whitespace-nowrap font-bold text-slate-600">
+                              {h.tolerancia_hasta}
+                            </td>
+                            <td className="py-3.5 px-3 text-center whitespace-nowrap font-black text-[#17324D]">
+                              {h.hora_salida}
+                            </td>
+                            <td className="py-3.5 px-3 text-center whitespace-nowrap">
+                              {h.activo !== false ? (
+                                <span className="text-[10px] font-extrabold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
+                                  Activo
+                                </span>
+                              ) : (
+                                <span className="text-[10px] font-extrabold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-md">
+                                  Inactivo
+                                </span>
+                              )}
+                            </td>
+                            <td className="py-3.5 px-4 text-right whitespace-nowrap">
+                              <div className="flex items-center justify-end gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenEditHorario(h)}
+                                  className="p-1.5 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition-colors"
+                                  title="Editar Horario"
+                                >
+                                  <Edit3 className="w-4 h-4" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteHorario(h.id)}
+                                  className="p-1.5 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors"
+                                  title="Eliminar Horario"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
                 </div>
-              ))}
+              </div>
             </div>
           )}
         </div>
@@ -2779,6 +3062,200 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                   className="h-11 px-5 bg-[#00A651] hover:bg-[#008f45] text-white font-extrabold rounded-xl shadow-xs transition-all disabled:opacity-50 flex items-center gap-2"
                 >
                   {isSavingSede ? 'Guardando...' : 'Guardar Sede'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL CREAR / EDITAR HORARIO */}
+      {isHorarioModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white w-full max-w-lg rounded-3xl p-6 shadow-2xl space-y-4 my-8 border border-slate-200">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-emerald-100 flex items-center justify-center text-[#00A651]">
+                  <Clock className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-slate-800 text-base">
+                    {editingHorario ? 'Editar Horario Institucional' : 'Nuevo Horario Institucional'}
+                  </h3>
+                  <p className="text-xs text-slate-500 font-medium">Configuración de turnos y días aplicables</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsHorarioModalOpen(false)}
+                className="w-8 h-8 rounded-full hover:bg-slate-100 flex items-center justify-center text-slate-500 font-bold text-lg"
+              >
+                ✕
+              </button>
+            </div>
+
+            {horarioModalError && (
+              <div className="p-3 bg-red-50 border border-red-200 rounded-2xl text-xs text-red-700 font-semibold flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
+                <span>{horarioModalError}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleSaveHorario} className="space-y-4 text-xs font-semibold">
+              {/* Sede */}
+              <div>
+                <label className="block text-slate-700 mb-1">Sede Educativa *</label>
+                <select
+                  value={horarioForm.sede_id}
+                  onChange={e => setHorarioForm({ ...horarioForm, sede_id: e.target.value })}
+                  className="w-full h-11 px-3 bg-slate-50 border border-slate-300 rounded-xl outline-none font-bold text-slate-900"
+                  required
+                >
+                  <option value="">Seleccione una sede...</option>
+                  {sedes.map(s => (
+                    <option key={s.id} value={s.id}>
+                      {s.nombre}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Nombre */}
+              <div>
+                <label className="block text-slate-700 mb-1">Nombre / Identificador del Horario *</label>
+                <input
+                  type="text"
+                  placeholder="Ej. Poroma - Turno Noche (Regular)"
+                  value={horarioForm.nombre}
+                  onChange={e => setHorarioForm({ ...horarioForm, nombre: e.target.value })}
+                  className="w-full h-11 px-3 bg-slate-50 border border-slate-300 rounded-xl outline-none font-bold text-slate-900"
+                  required
+                />
+              </div>
+
+              {/* Temporada (Regular o Invierno) */}
+              <div>
+                <label className="block text-slate-700 mb-1">Temporada del Horario *</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setHorarioForm({ ...horarioForm, es_invierno: false })}
+                    className={`h-10 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition-all ${
+                      !horarioForm.es_invierno
+                        ? 'bg-emerald-600 text-white shadow-xs'
+                        : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                    }`}
+                  >
+                    <span>Regular / Verano</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setHorarioForm({ ...horarioForm, es_invierno: true })}
+                    className={`h-10 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition-all ${
+                      horarioForm.es_invierno
+                        ? 'bg-blue-600 text-white shadow-xs'
+                        : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                    }`}
+                  >
+                    <span>Horario de Invierno</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Días de la semana */}
+              <div>
+                <label className="block text-slate-700 mb-1.5">Días Aplicables *</label>
+                <div className="flex flex-wrap gap-1.5">
+                  {[
+                    { key: 'lunes', label: 'Lunes' },
+                    { key: 'martes', label: 'Martes' },
+                    { key: 'miércoles', label: 'Miércoles' },
+                    { key: 'jueves', label: 'Jueves' },
+                    { key: 'viernes', label: 'Viernes' },
+                    { key: 'sábado', label: 'Sábado' },
+                    { key: 'domingo', label: 'Domingo' },
+                  ].map(d => {
+                    const isSelected = (horarioForm.dias_semana || []).includes(d.key);
+                    return (
+                      <button
+                        key={d.key}
+                        type="button"
+                        onClick={() => handleToggleDiaSemana(d.key)}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                          isSelected
+                            ? 'bg-[#17324D] text-white shadow-xs'
+                            : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
+                        }`}
+                      >
+                        {d.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Tiempos: Ingreso, Tolerancia, Salida */}
+              <div className="grid grid-cols-3 gap-2 p-3 bg-slate-50 rounded-2xl border border-slate-200">
+                <div>
+                  <label className="block text-slate-600 text-[10px] uppercase font-bold mb-1">Hora Ingreso *</label>
+                  <input
+                    type="time"
+                    value={horarioForm.hora_ingreso}
+                    onChange={e => setHorarioForm({ ...horarioForm, hora_ingreso: e.target.value })}
+                    className="w-full h-10 px-2 bg-white border border-slate-300 rounded-xl outline-none font-black text-[#00A651] text-center"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-600 text-[10px] uppercase font-bold mb-1">Tolerancia *</label>
+                  <input
+                    type="time"
+                    value={horarioForm.tolerancia_hasta}
+                    onChange={e => setHorarioForm({ ...horarioForm, tolerancia_hasta: e.target.value })}
+                    className="w-full h-10 px-2 bg-white border border-slate-300 rounded-xl outline-none font-bold text-slate-700 text-center"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-600 text-[10px] uppercase font-bold mb-1">Hora Salida *</label>
+                  <input
+                    type="time"
+                    value={horarioForm.hora_salida}
+                    onChange={e => setHorarioForm({ ...horarioForm, hora_salida: e.target.value })}
+                    className="w-full h-10 px-2 bg-white border border-slate-300 rounded-xl outline-none font-black text-[#17324D] text-center"
+                    required
+                  />
+                </div>
+              </div>
+
+              {/* Estado */}
+              <div className="flex items-center gap-2 pt-1">
+                <input
+                  type="checkbox"
+                  id="horarioActivoCheck"
+                  checked={horarioForm.activo}
+                  onChange={e => setHorarioForm({ ...horarioForm, activo: e.target.checked })}
+                  className="w-4 h-4 rounded-md text-[#00A651] accent-[#00A651] cursor-pointer"
+                />
+                <label htmlFor="horarioActivoCheck" className="text-slate-700 text-xs font-bold cursor-pointer">
+                  Horario activo para asignaciones y cálculo de asistencia
+                </label>
+              </div>
+
+              <div className="pt-3 flex justify-end gap-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setIsHorarioModalOpen(false)}
+                  disabled={isSavingHorario}
+                  className="h-11 px-4 bg-slate-100 text-slate-700 font-bold rounded-xl hover:bg-slate-200 transition-all disabled:opacity-50"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSavingHorario}
+                  className="h-11 px-5 bg-[#00A651] hover:bg-[#008f45] text-white font-extrabold rounded-xl shadow-xs transition-all disabled:opacity-50 flex items-center gap-2"
+                >
+                  {isSavingHorario ? 'Guardando...' : editingHorario ? 'Guardar Cambios' : 'Crear Horario'}
                 </button>
               </div>
             </form>

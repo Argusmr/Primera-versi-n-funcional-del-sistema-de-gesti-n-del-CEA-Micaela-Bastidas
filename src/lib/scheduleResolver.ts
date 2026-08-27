@@ -66,53 +66,92 @@ export async function setTemporadaInstitucional(nuevaTemporada: TemporadaInstitu
 }
 
 /**
- * Resuelve el horario adecuado para una sede respetando la temporada activa.
+ * Normaliza un nombre de día en español
  */
-function seleccionarHorarioParaTemporada(
+export function normalizarDiaSemana(dia: string): string {
+  const d = (dia || '').toLowerCase().trim();
+  if (d.startsWith('lun')) return 'lunes';
+  if (d.startsWith('mar')) return 'martes';
+  if (d.startsWith('mi')) return 'miércoles';
+  if (d.startsWith('jue')) return 'jueves';
+  if (d.startsWith('vie')) return 'viernes';
+  if (d.startsWith('s')) return 'sábado';
+  if (d.startsWith('d')) return 'domingo';
+  return d;
+}
+
+/**
+ * Obtiene el día actual de la semana en minúsculas en español (ej: 'lunes')
+ */
+export function getDiaActualSemana(): string {
+  const dias = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
+  const now = new Date();
+  return dias[now.getDay()];
+}
+
+/**
+ * Resuelve el horario adecuado para una sede respetando el día actual y la temporada institucional activa.
+ * 
+ * Regla:
+ * 1. Filtra los horarios de la sede aplicables al día consultado (o todos si no se pasa día).
+ * 2. Si la temporada activa es invierno:
+ *    a) Busca si la sede tiene un horario con es_invierno === true para ese día.
+ *    b) Si existe, retorna el horario de invierno exacto.
+ *    c) Si NO existe (ej: San Juan de Horcas), mantiene el horario regular (es_invierno === false).
+ * 3. Si la temporada activa es verano/regular:
+ *    Retorna el horario con es_invierno === false para ese día.
+ * 4. Respaldo: si el docente tenía un horario_id específico asignado y no hay match por sede/día, lo utiliza.
+ */
+export function seleccionarHorarioParaTemporada(
   horariosSede: Horario[],
   temporada: TemporadaInstitucional,
-  docenteHorarioId?: string
+  docenteHorarioId?: string,
+  diaConsulta?: string
 ): Horario | null {
   if (!horariosSede || horariosSede.length === 0) return null;
 
+  const diaActual = normalizarDiaSemana(diaConsulta || getDiaActualSemana());
   const esInvierno = temporada === 'invierno';
 
-  // 1. Si existe un horario que coincide con la temporada deseada
-  const exactMatch = horariosSede.find(h => Boolean(h.es_invierno) === esInvierno);
-  if (exactMatch) {
-    return exactMatch;
-  }
+  // 1. Filtrar por día aplicable si está configurado en los horarios
+  const horariosDelDia = horariosSede.filter(h => {
+    if (!h.dias_semana || h.dias_semana.length === 0) return true;
+    const diasNorm = h.dias_semana.map(normalizarDiaSemana);
+    return diasNorm.includes(diaActual);
+  });
 
-  // 2. Si el docente tiene un horario_id asignado y está en la lista
-  if (docenteHorarioId) {
-    const docH = horariosSede.find(h => h.id === docenteHorarioId);
-    if (docH) {
-      // Si el horario asignado al docente ya concuerda con la temporada
-      if (Boolean(docH.es_invierno) === esInvierno) {
-        return docH;
-      }
-      // Adaptar el horario asignado a la temporada activa
-      const delta = esInvierno ? -30 : 30;
-      const cleanName = docH.nombre.replace(/ - Horario de Invierno| - Habitual \(Noche\)/g, '').trim();
-      return {
-        ...docH,
-        hora_salida: ajustarHoraSalida(docH.hora_salida, delta),
-        es_invierno: esInvierno,
-        nombre: esInvierno ? `${cleanName} - Horario de Invierno` : `${cleanName} - Habitual (Noche)`
-      };
+  // Lista base a evaluar: primero los que corresponden al día, o todos los de la sede si ninguno coincide exactamente
+  const pool = horariosDelDia.length > 0 ? horariosDelDia : horariosSede;
+
+  // 2. Si es invierno:
+  if (esInvierno) {
+    const horarioInvierno = pool.find(h => Boolean(h.es_invierno) === true);
+    if (horarioInvierno) {
+      return horarioInvierno;
+    }
+    // Si no existe horario de invierno para esta sede/día (ej. San Juan de Horcas), mantiene horario regular
+    const horarioRegularFallback = pool.find(h => !h.es_invierno);
+    if (horarioRegularFallback) {
+      return horarioRegularFallback;
+    }
+  } else {
+    // Temporada Regular / Verano
+    const horarioRegular = pool.find(h => !h.es_invierno);
+    if (horarioRegular) {
+      return horarioRegular;
     }
   }
 
-  // 3. Si solo hay un horario base de otra temporada, adaptarlo dinámicamente
-  const baseHorario = horariosSede[0];
-  const delta = esInvierno ? -30 : 30;
-  const cleanName = baseHorario.nombre.replace(/ - Horario de Invierno| - Habitual \(Noche\)/g, '').trim();
-  return {
-    ...baseHorario,
-    hora_salida: ajustarHoraSalida(baseHorario.hora_salida, delta),
-    es_invierno: esInvierno,
-    nombre: esInvierno ? `${cleanName} - Horario de Invierno` : `${cleanName} - Habitual (Noche)`
-  };
+  // 3. Respaldo por ID de horario asignado previamente al docente
+  if (docenteHorarioId) {
+    const docH = horariosSede.find(h => h.id === docenteHorarioId);
+    if (docH) {
+      return docH;
+    }
+  }
+
+  // 4. Último recurso dentro de la sede: primer horario activo
+  return pool[0] || horariosSede[0] || null;
 }
 
 /**
