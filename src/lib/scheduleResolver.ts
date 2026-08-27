@@ -1,7 +1,8 @@
-import { AsignacionDocente, Horario, Perfil, Sede } from '../types';
+import { AsignacionDocente, Horario, Perfil, Sede, DatosInstitucionales } from '../types';
 import { supabase, isSupabaseConfigured } from './supabase';
 import { INITIAL_HORARIOS, INITIAL_SEDES } from './mockData';
 import { loadAsignacionesForDocente } from './teacherAssignments';
+import { loadDatosInstitucionales, saveDatosInstitucionales, getLocalDatosInstitucionales } from './institutional';
 
 export type TemporadaInstitucional = 'invierno' | 'verano';
 
@@ -11,8 +12,6 @@ export interface SedeHorarioResuelto {
   fuente: 'asignacion_activa' | 'perfil' | 'ninguna';
   temporada: TemporadaInstitucional;
 }
-
-const TEMPORADA_STORAGE_KEY = 'cea_temporada_institucional_activa_v1';
 
 /**
  * Ajusta una hora en formato HH:mm sumando o restando minutos (ej: '22:00', -30 -> '21:30')
@@ -29,89 +28,37 @@ export function ajustarHoraSalida(hora: string, deltaMinutos: number): string {
 }
 
 /**
- * Determina la temporada institucional activa (Invierno o Verano/Habitual).
- * 
- * Regla:
- * 1. Consulta la tabla public.horarios en Supabase para verificar si hay horarios activos con es_invierno === true.
- * 2. Si no hay conexión o no está configurado Supabase, consulta localStorage (TEMPORADA_STORAGE_KEY) o mock data.
+ * Determina la temporada institucional activa (Invierno o Verano/Habitual)
+ * obtenida desde datos_institucionales.temporada_actual.
  */
 export async function determinarTemporadaInstitucional(): Promise<TemporadaInstitucional> {
   try {
-    // 1. Verificar en Supabase
-    if (isSupabaseConfigured && supabase) {
-      const { data, error } = await supabase
-        .from('horarios')
-        .select('id, es_invierno, activo')
-        .eq('activo', true);
-
-      if (!error && data && data.length > 0) {
-        const tieneInviernoActivo = data.some((h: any) => h.es_invierno === true);
-        const temp: TemporadaInstitucional = tieneInviernoActivo ? 'invierno' : 'verano';
-        try {
-          localStorage.setItem(TEMPORADA_STORAGE_KEY, temp);
-        } catch {
-          // ignore
-        }
-        return temp;
-      }
+    const datos = await loadDatosInstitucionales();
+    if (datos && (datos.temporada_actual === 'invierno' || datos.temporada_actual === 'verano')) {
+      return datos.temporada_actual;
     }
   } catch (e) {
-    console.warn('Error al verificar temporada institucional en Supabase:', e);
+    console.warn('Error al verificar temporada institucional desde datos_institucionales:', e);
   }
 
-  // 2. Fallback localStorage
-  try {
-    const local = localStorage.getItem(TEMPORADA_STORAGE_KEY);
-    if (local === 'invierno' || local === 'verano') {
-      return local;
-    }
-  } catch {
-    // ignore
-  }
-
-  // 3. Fallback mock data
-  const tieneInviernoMock = INITIAL_HORARIOS.some(h => h.activo && h.es_invierno);
-  return tieneInviernoMock ? 'invierno' : 'verano';
+  const local = getLocalDatosInstitucionales();
+  return local.temporada_actual === 'invierno' ? 'invierno' : 'verano';
 }
 
 /**
- * Permite cambiar la temporada institucional activa y sincronizarla
+ * Permite cambiar la temporada institucional activa y sincronizarla en datos_institucionales
+ * sin alterar ni mutar los registros de la tabla horarios.
  */
 export async function setTemporadaInstitucional(nuevaTemporada: TemporadaInstitucional): Promise<boolean> {
   try {
-    localStorage.setItem(TEMPORADA_STORAGE_KEY, nuevaTemporada);
+    const actual = getLocalDatosInstitucionales();
+    const updated: DatosInstitucionales = {
+      ...actual,
+      temporada_actual: nuevaTemporada
+    };
+    const res = await saveDatosInstitucionales(updated);
     window.dispatchEvent(new CustomEvent('temporadaInstitucionalChanged', { detail: { temporada: nuevaTemporada } }));
-
-    if (isSupabaseConfigured && supabase) {
-      const esInv = nuevaTemporada === 'invierno';
-      // Obtener todos los horarios activos
-      const { data: horariosList } = await supabase
-        .from('horarios')
-        .select('*')
-        .eq('activo', true);
-
-      if (horariosList && horariosList.length > 0) {
-        for (const h of horariosList) {
-          if (h.es_invierno !== esInv) {
-            const delta = esInv ? -30 : 30;
-            const newSalida = ajustarHoraSalida(h.hora_salida, delta);
-            const cleanName = h.nombre.replace(/ - Horario de Invierno| - Habitual \(Noche\)/g, '').trim();
-            const newNombre = esInv ? `${cleanName} - Horario de Invierno` : `${cleanName} - Habitual (Noche)`;
-
-            await supabase
-              .from('horarios')
-              .update({
-                es_invierno: esInv,
-                hora_salida: newSalida,
-                nombre: newNombre,
-                updated_at: new Date().toISOString()
-              })
-              .eq('id', h.id);
-          }
-        }
-      }
-    }
-    return true;
+    return res.success;
   } catch (e) {
     console.error('Error al actualizar temporada institucional:', e);
     return false;

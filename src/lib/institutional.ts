@@ -9,6 +9,7 @@ export const DEFAULT_DATOS_INSTITUCIONALES: DatosInstitucionales = {
   direccion: 'Poroma - Chuquisaca, Bolivia',
   telefono: '+591 67891234',
   lema_subtitulo: 'Asistencia, seguimiento e información en un solo lugar',
+  temporada_actual: 'verano',
 };
 
 const STORAGE_KEY = 'cea_datos_institucionales_v1';
@@ -54,6 +55,7 @@ export async function loadDatosInstitucionales(): Promise<DatosInstitucionales> 
           direccion: data.direccion || DEFAULT_DATOS_INSTITUCIONALES.direccion,
           telefono: data.telefono || DEFAULT_DATOS_INSTITUCIONALES.telefono,
           lema_subtitulo: data.lema_subtitulo || DEFAULT_DATOS_INSTITUCIONALES.lema_subtitulo,
+          temporada_actual: data.temporada_actual || DEFAULT_DATOS_INSTITUCIONALES.temporada_actual || 'verano',
         };
         setLocalDatosInstitucionales(fetched);
         return fetched;

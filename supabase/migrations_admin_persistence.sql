@@ -23,8 +23,13 @@ CREATE TABLE IF NOT EXISTS public.datos_institucionales (
   direccion TEXT,
   telefono TEXT,
   lema_subtitulo TEXT,
+  temporada_actual TEXT DEFAULT 'verano' CHECK (temporada_actual IN ('verano', 'invierno')),
   updated_at TIMESTAMPTZ DEFAULT now()
 );
+
+-- Migración idempotente para tabla existente
+ALTER TABLE public.datos_institucionales 
+ADD COLUMN IF NOT EXISTS temporada_actual TEXT DEFAULT 'verano' CHECK (temporada_actual IN ('verano', 'invierno'));
 
 -- Solo se cargan los dos datos institucionales ya conocidos.
 -- No se inventa director, teléfono, cargo, dirección ni lema.

@@ -430,6 +430,7 @@ export interface DatosInstitucionales {
   direccion: string;
   telefono: string;
   lema_subtitulo: string;
+  temporada_actual?: 'verano' | 'invierno';
 }
 
 export interface ConfiguracionCalendario {
