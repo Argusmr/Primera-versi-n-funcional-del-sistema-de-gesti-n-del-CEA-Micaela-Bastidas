@@ -16,10 +16,12 @@ import {
   RefreshCw,
   AlertCircle
 } from 'lucide-react';
-import { Perfil, AsistenciaDocente, ResumenAsistenciaDocenteMensual, ConfiguracionCalendario } from '../types';
+import { Perfil, AsistenciaDocente, ResumenAsistenciaDocenteMensual, ConfiguracionCalendario, IncidenciaAsistenciaDocente } from '../types';
 import { downloadDocenteAttendanceReport } from '../lib/excelExport';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { loadConfiguracionesCalendario, getDiasTrabajadosForMonth, getLocalConfiguracionesCalendario } from '../lib/calendar';
+import { loadIncidenciasAsistencia } from '../lib/incidencias';
+import { AttendanceIncidentsModal } from './AttendanceIncidentsModal';
 
 interface TeacherAttendanceViewProps {
   user: Perfil;
@@ -35,11 +37,21 @@ export const TeacherAttendanceView: React.FC<TeacherAttendanceViewProps> = ({ us
   const [loading, setLoading] = useState<boolean>(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [selectedSelfieUrl, setSelectedSelfieUrl] = useState<string | null>(null);
+  const [misIncidencias, setMisIncidencias] = useState<IncidenciaAsistenciaDocente[]>([]);
+  const [showIncidenciasModal, setShowIncidenciasModal] = useState<boolean>(false);
 
   const isDirectorOrAdmin = user.rol === 'superadmin' || user.rol === 'director' || user.rol === 'coordinador';
 
   useEffect(() => {
     loadConfiguracionesCalendario().then(configs => setCalendarConfigs(configs));
+
+    const loadIncidencias = () => {
+      loadIncidenciasAsistencia(isDirectorOrAdmin ? undefined : user.id).then(data => {
+        setMisIncidencias(data);
+      });
+    };
+
+    loadIncidencias();
 
     const handleCalendarChange = (e: any) => {
       if (e.detail) {
@@ -47,8 +59,12 @@ export const TeacherAttendanceView: React.FC<TeacherAttendanceViewProps> = ({ us
       }
     };
     window.addEventListener('configuracionCalendarioChanged', handleCalendarChange);
-    return () => window.removeEventListener('configuracionCalendarioChanged', handleCalendarChange);
-  }, []);
+    window.addEventListener('incidenciasChanged', loadIncidencias);
+    return () => {
+      window.removeEventListener('configuracionCalendarioChanged', handleCalendarChange);
+      window.removeEventListener('incidenciasChanged', loadIncidencias);
+    };
+  }, [user.id, isDirectorOrAdmin]);
 
   // Fetch real records from public.asistencias_docentes
   const fetchAsistencias = async () => {
@@ -257,6 +273,78 @@ export const TeacherAttendanceView: React.FC<TeacherAttendanceViewProps> = ({ us
         <FileSpreadsheet className="w-5 h-5 text-[#FFC845]" />
         <span>Descargar Reporte Mensual en Excel</span>
       </button>
+
+      {/* Incidencias de Asistencia Banner / Estado */}
+      <div className="bg-amber-50/80 rounded-3xl p-4 sm:p-5 border border-amber-300 shadow-xs space-y-3">
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <div className="flex items-center gap-2.5">
+            <div className="p-2 bg-amber-500 text-white rounded-xl shadow-xs">
+              <ShieldAlert className="w-5 h-5" />
+            </div>
+            <div>
+              <h3 className="font-extrabold text-sm sm:text-base text-amber-950">
+                {isDirectorOrAdmin ? 'Panel de Incidencias Institucionales' : 'Mis Incidencias de Asistencia'}
+              </h3>
+              <p className="text-xs text-amber-800 font-medium">
+                {isDirectorOrAdmin
+                  ? 'Revisión y dictamen de marcaciones incompletas del plantel docente'
+                  : 'Estado de revisión administrativa de marcaciones observadas por Dirección'}
+              </p>
+            </div>
+          </div>
+
+          <button
+            onClick={() => setShowIncidenciasModal(true)}
+            className="px-3.5 py-2 bg-amber-600 hover:bg-amber-700 text-white text-xs font-black rounded-xl shadow-xs flex items-center gap-1.5 transition-all"
+          >
+            <span>{isDirectorOrAdmin ? 'Administrar Incidencias' : 'Ver Detalle'}</span>
+            <Eye className="w-3.5 h-3.5" />
+          </button>
+        </div>
+
+        {misIncidencias.length > 0 ? (
+          <div className="space-y-2 pt-1 border-t border-amber-200/70">
+            <span className="text-[11px] font-bold text-amber-900 block">
+              {isDirectorOrAdmin ? 'Incidencias registradas:' : 'Tus registros en evaluación:'}
+            </span>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {misIncidencias.slice(0, 4).map(inc => (
+                <div
+                  key={inc.id}
+                  className="p-2.5 bg-white rounded-xl border border-amber-200 text-xs flex items-center justify-between gap-2 shadow-2xs"
+                >
+                  <div className="space-y-0.5 flex-1 min-w-0">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="font-bold text-[#17324D] truncate">
+                        {isDirectorOrAdmin ? inc.docente_nombre : inc.fecha}
+                      </span>
+                      <span className="text-[10px] text-slate-500 font-medium">({inc.fecha})</span>
+                    </div>
+                    <p className="text-[11px] text-slate-600 line-clamp-1 italic">
+                      {inc.detalle}
+                    </p>
+                  </div>
+                  <span className={`px-2 py-0.5 rounded-md text-[10px] font-extrabold uppercase shrink-0 ${
+                    inc.estado === 'pendiente'
+                      ? 'bg-amber-100 text-amber-900 border border-amber-300'
+                      : inc.estado === 'justificado'
+                      ? 'bg-emerald-100 text-emerald-900 border border-emerald-300'
+                      : inc.estado === 'falta_confirmada'
+                      ? 'bg-rose-100 text-rose-900 border border-rose-300'
+                      : 'bg-blue-100 text-blue-900 border border-blue-300'
+                  }`}>
+                    {inc.estado}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <p className="text-xs text-amber-900 font-semibold pt-1 border-t border-amber-200/70">
+            No tienes incidencias u observaciones pendientes en tu historial laboral.
+          </p>
+        )}
+      </div>
 
       {/* Daily Records List */}
       <div className="bg-white rounded-3xl p-5 border border-slate-200 shadow-xs space-y-4">
@@ -482,6 +570,19 @@ export const TeacherAttendanceView: React.FC<TeacherAttendanceViewProps> = ({ us
             </button>
           </div>
         </div>
+      )}
+
+      {/* Modal Institucional de Incidencias */}
+      {showIncidenciasModal && (
+        <AttendanceIncidentsModal
+          user={user}
+          onClose={() => {
+            setShowIncidenciasModal(false);
+            loadIncidenciasAsistencia(isDirectorOrAdmin ? undefined : user.id).then(data => {
+              setMisIncidencias(data);
+            });
+          }}
+        />
       )}
     </div>
   );

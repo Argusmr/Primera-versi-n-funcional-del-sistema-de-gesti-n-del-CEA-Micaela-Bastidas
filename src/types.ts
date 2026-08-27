@@ -230,6 +230,47 @@ export type EstadoAsistenciaDocente =
 export type EstadoGPS = 'dentro_rango' | 'fuera_rango' | 'gps_impreciso' | 'sin_gps';
 export type EstadoExcepcion = 'ninguna' | 'pendiente_revision' | 'aprobada' | 'rechazada';
 
+export type EstadoIncidenciaAsistencia =
+  | 'pendiente'
+  | 'justificado'
+  | 'falta_confirmada'
+  | 'corregido';
+
+export type TipoIncidenciaAsistencia =
+  | 'sin_salida'
+  | 'sin_ingreso'
+  | 'sin_registro'
+  | 'problema_gps'
+  | 'problema_selfie'
+  | 'registro_incompleto'
+  | 'error_tecnico';
+
+export interface IncidenciaAsistenciaDocente {
+  id: string;
+  docente_id: string;
+  fecha: string; // YYYY-MM-DD
+  tipo_incidencia: TipoIncidenciaAsistencia | string;
+  estado: EstadoIncidenciaAsistencia;
+  detalle?: string;
+  resolucion?: string;
+  resuelto_por?: string;
+  fecha_resolucion?: string;
+  created_at?: string;
+
+  // Joined / UI Helpers
+  docente_nombre?: string;
+  docente_rda?: string;
+  sede_nombre?: string;
+  horario_esperado?: string;
+  hora_ingreso?: string;
+  hora_salida?: string;
+  selfie_url?: string;
+  estado_gps?: EstadoGPS | string;
+  distancia_m?: number;
+  actividad_pedagogica?: string;
+  resuelto_por_nombre?: string;
+}
+
 export interface FilaActividadPedagogica {
   id: string;
   area_nivel: 'EPA' | 'ESA' | 'ETA' | string;

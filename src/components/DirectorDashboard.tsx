@@ -38,7 +38,8 @@ import {
   ConfiguracionCalendario,
   Auditoria,
   DatosInstitucionales,
-  Sede
+  Sede,
+  IncidenciaAsistenciaDocente
 } from '../types';
 import { getLocalDatosInstitucionales } from '../lib/institutional';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
@@ -46,6 +47,8 @@ import { getBoliviaTodayDate } from '../lib/geo';
 import { loadAuditoriaLogs } from '../lib/audit';
 import { loadConfiguracionesCalendario, FALLBACK_DIAS_TRABAJADOS } from '../lib/calendar';
 import { getLocalControlDocumentalMap, getControlDocumentalForDocente, calculateEstadoControl } from '../lib/controlDocumental';
+import { loadIncidenciasAsistencia, evaluarYGenerarIncidenciasDelDia } from '../lib/incidencias';
+import { AttendanceIncidentsModal } from './AttendanceIncidentsModal';
 
 interface DirectorDashboardProps {
   user: Perfil;
@@ -83,6 +86,8 @@ export const DirectorDashboard: React.FC<DirectorDashboardProps> = ({
   const [calendarConfigs, setCalendarConfigs] = useState<ConfiguracionCalendario[]>([]);
   const [ultimasAuditorias, setUltimasAuditorias] = useState<Auditoria[]>([]);
   const [sedesList, setSedesList] = useState<Sede[]>([]);
+  const [incidenciasList, setIncidenciasList] = useState<IncidenciaAsistenciaDocente[]>([]);
+  const [isIncidenciasModalOpen, setIsIncidenciasModalOpen] = useState<boolean>(false);
 
   // Loading & error state
   const [loading, setLoading] = useState<boolean>(true);
@@ -287,6 +292,10 @@ export const DirectorDashboard: React.FC<DirectorDashboardProps> = ({
       setCalendarConfigs(calendarRes);
       setUltimasAuditorias(auditoriaData.slice(0, 6));
       setSedesList(sedesData);
+
+      // Cargar Incidencias de Asistencia Docente
+      const incData = await loadIncidenciasAsistencia();
+      setIncidenciasList(incData);
     } catch (err: any) {
       console.error('Error al cargar datos del Panel Ejecutivo:', err);
       setFetchError(err.message || 'Error de conexión con Supabase');
@@ -626,6 +635,43 @@ export const DirectorDashboard: React.FC<DirectorDashboardProps> = ({
                   {registrosIncompletos}
                 </strong>
                 <span className="text-[10px] text-slate-500 block font-medium">sin cierre</span>
+              </div>
+            </div>
+
+            {/* Sub-bloque institucional: Panel de Incidencias de Asistencia Docente */}
+            <div className="p-3.5 bg-gradient-to-r from-amber-50 to-orange-50 rounded-2xl border border-amber-300 space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="p-1.5 bg-amber-500 text-white rounded-xl shadow-xs">
+                    <ShieldAlert className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h4 className="font-extrabold text-xs sm:text-sm text-amber-950">
+                      Panel de Incidencias de Asistencia
+                    </h4>
+                    <p className="text-[11px] text-amber-800 font-medium">
+                      Marcaciones incompletas requieren dictamen de Dirección (Regla de No Falta Automática)
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => setIsIncidenciasModalOpen(true)}
+                  className="px-3 py-1.5 bg-[#00A651] hover:bg-[#008f45] text-white text-xs font-black rounded-xl shadow-xs flex items-center gap-1.5 transition-all shrink-0"
+                >
+                  <span>Revisar ({incidenciasList.filter(i => i.estado === 'pendiente').length} pend.)</span>
+                  <ArrowUpRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+
+              <div className="flex items-center gap-2 text-[11px] text-amber-900 font-semibold pt-1 border-t border-amber-200/70">
+                <span>⚠️ {incidenciasList.filter(i => i.estado === 'pendiente').length} Pendientes</span>
+                <span>•</span>
+                <span>✅ {incidenciasList.filter(i => i.estado === 'justificado').length} Justificadas</span>
+                <span>•</span>
+                <span>❌ {incidenciasList.filter(i => i.estado === 'falta_confirmada').length} Faltas</span>
+                <span>•</span>
+                <span>✏️ {incidenciasList.filter(i => i.estado === 'corregido').length} Corregidas</span>
               </div>
             </div>
 
@@ -986,6 +1032,19 @@ export const DirectorDashboard: React.FC<DirectorDashboardProps> = ({
             </button>
           </div>
         </div>
+      )}
+
+      {/* Modal Institucional: Panel de Incidencias de Asistencia Docente */}
+      {isIncidenciasModalOpen && (
+        <AttendanceIncidentsModal
+          user={user}
+          onClose={() => {
+            setIsIncidenciasModalOpen(false);
+            loadExecutiveData();
+          }}
+          docentesList={docentes}
+          sedesList={sedesList}
+        />
       )}
     </div>
   );
