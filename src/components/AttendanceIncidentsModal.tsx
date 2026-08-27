@@ -379,9 +379,9 @@ export const AttendanceIncidentsModal: React.FC<AttendanceIncidentsModalProps> =
           ) : filteredIncidencias.length === 0 ? (
             <div className="p-8 text-center text-xs text-slate-500 bg-slate-50 rounded-2xl border border-slate-200 space-y-2">
               <CheckCircle2 className="w-8 h-8 text-[#00A651] mx-auto" />
-              <p className="font-bold text-slate-700 text-sm">No se encontraron incidencias con los filtros aplicados</p>
+              <p className="font-bold text-slate-700 text-sm">No existen incidencias de asistencia docente registradas</p>
               <p className="text-slate-500 text-xs">
-                Todas las marcaciones cumplen con la normativa o ya han sido dictaminadas por Dirección.
+                Todas las marcaciones de los docentes registrados cumplen con la normativa o no presentan observaciones pendientes.
               </p>
             </div>
           ) : (

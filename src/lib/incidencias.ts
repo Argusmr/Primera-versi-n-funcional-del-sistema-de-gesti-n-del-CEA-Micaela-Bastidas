@@ -6,79 +6,25 @@ import { getBoliviaTodayDate } from './geo';
 
 const LOCAL_INCIDENCIAS_KEY = 'cea_incidencias_asistencia_docente_v1';
 
-export const INITIAL_MOCK_INCIDENCIAS: IncidenciaAsistenciaDocente[] = [
-  {
-    id: 'inc-1',
-    docente_id: 'usr-doc-2', // Ing. Roberto Condori
-    fecha: '2026-08-26',
-    tipo_incidencia: 'sin_salida',
-    estado: 'pendiente',
-    detalle: 'Ingreso registrado a las 16:25 con selfie y GPS validado en Sede San Juan. No se registró marcación de salida al culminar la jornada.',
-    docente_nombre: 'Ing. Roberto Condori',
-    docente_rda: '782910',
-    sede_nombre: 'Sede San Juan de Horcas',
-    horario_esperado: '16:30 - 21:00',
-    hora_ingreso: '16:25',
-    hora_salida: undefined,
-    estado_gps: 'dentro_rango',
-    distancia_m: 35,
-    selfie_url: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=300&auto=format&fit=crop&q=80',
-    actividad_pedagogica: 'Taller de Sistemas Informáticos - Módulo II',
-    created_at: '2026-08-26T21:30:00Z',
-  },
-  {
-    id: 'inc-2',
-    docente_id: 'usr-doc-3', // Prof. Carmen Torrez
-    fecha: '2026-08-25',
-    tipo_incidencia: 'problema_gps',
-    estado: 'justificado',
-    detalle: 'Marcación realizada a 350m de la Sede Poroma por falla de señal GPS en zona comunitaria. Autorizado por comisión institucional.',
-    resolucion: 'Justificado por el Director: Problema de cobertura satelital en el sector y comisión de campo autorizada.',
-    resuelto_por: 'usr-director',
-    resuelto_por_nombre: 'Director General Institucional',
-    fecha_resolucion: '2026-08-26T08:30:00Z',
-    docente_nombre: 'Prof. Carmen Torrez',
-    docente_rda: '456789',
-    sede_nombre: 'Sede Poroma',
-    horario_esperado: '18:30 - 22:00',
-    hora_ingreso: '18:28',
-    hora_salida: '22:05',
-    estado_gps: 'fuera_rango',
-    distancia_m: 350,
-    actividad_pedagogica: 'Clase de Humanidades y Redacción Técnica',
-    created_at: '2026-08-25T18:40:00Z',
-  },
-  {
-    id: 'inc-3',
-    docente_id: 'usr-doc-1', // Lic. Elena Ramos
-    fecha: '2026-08-22',
-    tipo_incidencia: 'sin_registro',
-    estado: 'pendiente',
-    detalle: 'Sin marcaciones de ingreso ni salida registradas en la jornada del viernes.',
-    docente_nombre: 'Lic. Elena Ramos',
-    docente_rda: '102938',
-    sede_nombre: 'Sede Poroma',
-    horario_esperado: '18:30 - 22:00',
-    hora_ingreso: undefined,
-    hora_salida: undefined,
-    estado_gps: 'sin_gps',
-    created_at: '2026-08-22T22:30:00Z',
-  }
-];
-
+/**
+ * Obtiene las incidencias guardadas localmente en cache del cliente (sin datos ficticios).
+ */
 export function getLocalIncidencias(): IncidenciaAsistenciaDocente[] {
   try {
     const raw = localStorage.getItem(LOCAL_INCIDENCIAS_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      if (Array.isArray(parsed)) return parsed;
     }
   } catch (e) {
     console.warn('Error leyendo incidencias locales:', e);
   }
-  return INITIAL_MOCK_INCIDENCIAS;
+  return [];
 }
 
+/**
+ * Persiste el cache local de incidencias
+ */
 export function saveLocalIncidencias(list: IncidenciaAsistenciaDocente[]): void {
   try {
     localStorage.setItem(LOCAL_INCIDENCIAS_KEY, JSON.stringify(list));
@@ -89,7 +35,8 @@ export function saveLocalIncidencias(list: IncidenciaAsistenciaDocente[]): void 
 }
 
 /**
- * Carga las incidencias de asistencia docente desde Supabase con fallback reactivo local
+ * Carga las incidencias de asistencia docente exclusivamente desde Supabase.
+ * Si no existen registros en la base de datos, retorna un arreglo vacío [].
  */
 export async function loadIncidenciasAsistencia(docenteId?: string): Promise<IncidenciaAsistenciaDocente[]> {
   if (isSupabaseConfigured && supabase) {
@@ -135,6 +82,8 @@ export async function loadIncidenciasAsistencia(docenteId?: string): Promise<Inc
 
         saveLocalIncidencias(mapped);
         return mapped;
+      } else if (error) {
+        console.warn('Advertencia en consulta de incidencias en Supabase:', error.message);
       }
     } catch (e) {
       console.warn('Error al consultar incidencias en Supabase:', e);
@@ -242,9 +191,9 @@ export async function resolverIncidenciaAsistencia(
 }
 
 /**
- * Evalúa las asistencias docentes vs horarios asignados para una fecha determinada
+ * Evalúa las asistencias de docentes REALES vs horarios reales asignados para una fecha determinada
  * y genera incidencias en estado 'pendiente' si hay registros incompletos o ausencias.
- * REGLA INSTITUCIONAL: NUNCA genera faltas automáticas.
+ * REGLA INSTITUCIONAL: NUNCA genera faltas automáticas ni usa datos mock.
  */
 export async function evaluarYGenerarIncidenciasDelDia(
   fecha: string,
@@ -257,7 +206,7 @@ export async function evaluarYGenerarIncidenciasDelDia(
   for (const doc of docentes) {
     if (!doc.activo) continue;
 
-    // Obtener horario esperado para esa fecha
+    // Obtener horario esperado real para esa fecha
     const resolved = await resolverSedeYHorarioDocente(doc);
     if (!resolved.horario) continue; // Si no tiene horario curricular para ese día, no se evalúa
 
