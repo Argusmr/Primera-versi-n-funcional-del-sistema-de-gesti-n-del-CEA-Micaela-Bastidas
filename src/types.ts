@@ -79,6 +79,24 @@ export interface Horario {
   sede_nombre?: string;
 }
 
+export interface DocenteHorario {
+  id: string;
+  docente_id: string;
+  horario_id: string;
+  sede_id: string;
+  dias_semana: string[];
+  activo: boolean;
+  created_at?: string;
+  updated_at?: string;
+  // Joined / UI Helpers
+  sede_nombre?: string;
+  horario_nombre?: string;
+  hora_ingreso?: string;
+  tolerancia_hasta?: string;
+  hora_salida?: string;
+  es_invierno?: boolean;
+}
+
 export interface Grupo {
   id: string;
   nombre: string;

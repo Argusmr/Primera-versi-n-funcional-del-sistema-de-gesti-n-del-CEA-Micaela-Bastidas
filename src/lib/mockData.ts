@@ -161,6 +161,65 @@ export const INITIAL_HORARIOS: Horario[] = [
   },
 ];
 
+export const INITIAL_DOCENTES_HORARIOS: import('../types').DocenteHorario[] = [
+  {
+    id: 'dh-1',
+    docente_id: 'usr-doc-1', // Lic. Elena Ramos
+    sede_id: 'sede-1',
+    horario_id: 'hor-1',
+    dias_semana: ['lunes', 'martes', 'miércoles', 'jueves', 'viernes'],
+    activo: true,
+    sede_nombre: 'Sede Poroma',
+    horario_nombre: 'Poroma - Turno Noche (Regular)',
+    hora_ingreso: '18:30',
+    tolerancia_hasta: '18:40',
+    hora_salida: '22:00',
+    es_invierno: false
+  },
+  {
+    id: 'dh-2',
+    docente_id: 'usr-doc-2', // Ing. Roberto Condori (Claudia / caso multisede o multidía)
+    sede_id: 'sede-2',
+    horario_id: 'hor-3',
+    dias_semana: ['lunes', 'martes', 'miércoles', 'jueves'],
+    activo: true,
+    sede_nombre: 'Sede San Juan de Horcas',
+    horario_nombre: 'San Juan - Tarde/Noche (Lun-Jue)',
+    hora_ingreso: '16:30',
+    tolerancia_hasta: '16:40',
+    hora_salida: '21:00',
+    es_invierno: false
+  },
+  {
+    id: 'dh-3',
+    docente_id: 'usr-doc-2', // Ing. Roberto Condori (Viernes mañana)
+    sede_id: 'sede-2',
+    horario_id: 'hor-4',
+    dias_semana: ['viernes'],
+    activo: true,
+    sede_nombre: 'Sede San Juan de Horcas',
+    horario_nombre: 'San Juan - Turno Matutino (Viernes)',
+    hora_ingreso: '06:00',
+    tolerancia_hasta: '06:10',
+    hora_salida: '08:30',
+    es_invierno: false
+  },
+  {
+    id: 'dh-4',
+    docente_id: 'usr-doc-3', // Prof. Carmen Torrez
+    sede_id: 'sede-1',
+    horario_id: 'hor-1',
+    dias_semana: ['lunes', 'miércoles', 'viernes'],
+    activo: true,
+    sede_nombre: 'Sede Poroma',
+    horario_nombre: 'Poroma - Turno Noche (Regular)',
+    hora_ingreso: '18:30',
+    tolerancia_hasta: '18:40',
+    hora_salida: '22:00',
+    es_invierno: false
+  }
+];
+
 export const MOCK_SUPERADMIN: Perfil = {
   id: 'usr-director',
   nombre_completo: 'Director General Institucional',

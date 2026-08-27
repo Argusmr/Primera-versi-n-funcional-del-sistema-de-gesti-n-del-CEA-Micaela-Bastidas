@@ -685,24 +685,41 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
           <h3 className="font-extrabold text-base text-[#17324D] flex items-center gap-2">
             <Calendar className="w-5 h-5 text-[#11B8AE]" />
             <span>
-              Horario Asignado – {resolvedData.sede?.nombre || user.sede_nombre || 'Sin Sede'}
+              Horario Asignado para Hoy ({resolvedData.dia_consultado ? resolvedData.dia_consultado.toUpperCase() : 'HOY'})
             </span>
           </h3>
-          {resolvedData.horario?.nombre && (
-            <span className="px-2.5 py-0.5 bg-emerald-100 text-emerald-900 border border-emerald-200 rounded-full text-[11px] font-bold">
-              {resolvedData.horario.nombre}
+          <div className="flex items-center gap-1.5">
+            {resolvedData.temporada === 'invierno' && (
+              <span className="px-2 py-0.5 bg-blue-100 text-blue-900 border border-blue-200 rounded-full text-[10px] font-extrabold">
+                Invierno
+              </span>
+            )}
+            {resolvedData.horario?.nombre && (
+              <span className="px-2.5 py-0.5 bg-emerald-100 text-emerald-900 border border-emerald-200 rounded-full text-[11px] font-bold">
+                {resolvedData.horario.nombre}
+              </span>
+            )}
+          </div>
+        </div>
+
+        <div className="text-xs text-slate-500 font-medium flex items-center gap-1">
+          <MapPin className="w-3.5 h-3.5 text-[#00A651]" />
+          <span>Sede: <strong>{resolvedData.sede?.nombre || user.sede_nombre || 'Sin Sede Asignada'}</strong></span>
+          {resolvedData.fuente === 'docente_horario' && (
+            <span className="ml-1 text-[10px] font-extrabold text-emerald-800 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
+              Personalizado por Días
             </span>
           )}
         </div>
 
         {loadingSchedule ? (
           <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 text-center text-xs text-slate-500 font-medium animate-pulse">
-            Consultando horario asignado institucional...
+            Consultando horario asignado institucional para hoy...
           </div>
         ) : resolvedData.horario ? (
           <div className="bg-emerald-50/70 p-4 rounded-2xl border border-emerald-200 space-y-2 text-sm text-emerald-950 font-medium">
             <div className="flex justify-between items-center">
-              <span>Hora de Ingreso:</span>
+              <span>Hora de Ingreso (Hoy):</span>
               <strong className="text-base text-[#00A651]">
                 {resolvedData.horario.hora_ingreso || '--:--'}
               </strong>
@@ -720,7 +737,7 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
               </span>
             </div>
             <div className="flex justify-between items-center pt-2 border-t border-emerald-200">
-              <span>Salida Habitual:</span>
+              <span>Salida de Jornada:</span>
               <strong className="text-base text-[#17324D]">
                 {resolvedData.horario.hora_salida || '--:--'}
               </strong>
@@ -731,10 +748,10 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
             <AlertCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
             <div>
               <p className="text-xs font-bold text-amber-950">
-                Sin horario asignado. Consulte con Dirección
+                Sin horario asignado para hoy ({resolvedData.dia_consultado || 'día actual'}).
               </p>
               <p className="text-[11px] text-amber-800 mt-0.5">
-                No se encontró un horario curricular activo registrado para su sede o perfil.
+                Consulte con Dirección para registrar o activar su horario en la sede correspondiente.
               </p>
             </div>
           </div>
