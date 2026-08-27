@@ -27,7 +27,7 @@ import {
   ArrowRight
 } from 'lucide-react';
 import { Perfil, Sede, Horario, Programa, Subprograma, CarreraTecnica, Etapa, NivelEducativo, DatosInstitucionales } from '../types';
-import { INITIAL_SEDES } from '../lib/mockData';
+import { INITIAL_SEDES, INITIAL_HORARIOS } from '../lib/mockData';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { getLocalDatosInstitucionales, saveDatosInstitucionales, loadDatosInstitucionales } from '../lib/institutional';
 import {
@@ -49,6 +49,12 @@ import {
 } from '../lib/academic';
 import { AuditView } from './AuditView';
 import { WorkCalendarConfig } from './WorkCalendarConfig';
+import {
+  ajustarHoraSalida,
+  setTemporadaInstitucional,
+  determinarTemporadaInstitucional,
+  TemporadaInstitucional
+} from '../lib/scheduleResolver';
 
 interface AdminPanelProps {
   user: Perfil;
@@ -73,6 +79,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const [horarios, setHorarios] = useState<Horario[]>([]);
   const [loadingHorarios, setLoadingHorarios] = useState<boolean>(false);
   const [horariosError, setHorariosError] = useState<string | null>(null);
+  const [temporadaInstitucional, setTemporadaInstitucionalState] = useState<TemporadaInstitucional>('verano');
+  const [isChangingTemporada, setIsChangingTemporada] = useState<boolean>(false);
   const [sedes, setSedes] = useState<Sede[]>([]);
   const [loadingSedes, setLoadingSedes] = useState<boolean>(false);
   const [sedesError, setSedesError] = useState<string | null>(null);
@@ -117,8 +125,16 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   };
 
   const fetchHorarios = async () => {
+    // Determinar la temporada institucional activa
+    try {
+      const currentTemp = await determinarTemporadaInstitucional();
+      setTemporadaInstitucionalState(currentTemp);
+    } catch {
+      // ignore
+    }
+
     if (!isSupabaseConfigured || !supabase) {
-      setHorarios([]);
+      setHorarios(INITIAL_HORARIOS);
       return;
     }
     setLoadingHorarios(true);
@@ -132,7 +148,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       if (error) {
         console.error('Error al cargar horarios de Supabase:', error);
         setHorariosError(`Error de Supabase: ${error.message}`);
-        setHorarios([]);
+        setHorarios(INITIAL_HORARIOS);
       } else if (data) {
         const mapped: Horario[] = data.map((item: any) => ({
           ...item,
@@ -143,7 +159,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     } catch (err: any) {
       console.error('Excepción al cargar horarios:', err);
       setHorariosError(err.message || 'Error de conexión al cargar horarios');
-      setHorarios([]);
+      setHorarios(INITIAL_HORARIOS);
     } finally {
       setLoadingHorarios(false);
     }
@@ -314,8 +330,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     if (!target) return;
 
     const newInvierno = !target.es_invierno;
-    const newHoraSalida = newInvierno ? '21:30' : '22:00';
-    const cleanName = target.nombre.replace(' - Horario de Invierno', '').replace(' - Habitual (Noche)', '');
+    const delta = newInvierno ? -30 : 30;
+    const newHoraSalida = ajustarHoraSalida(target.hora_salida, delta);
+    const cleanName = target.nombre.replace(/ - Horario de Invierno| - Habitual \(Noche\)/g, '').trim();
     const newNombre = newInvierno ? `${cleanName} - Horario de Invierno` : `${cleanName} - Habitual (Noche)`;
 
     if (isSupabaseConfigured && supabase) {
@@ -349,7 +366,21 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         })
       );
     }
-    showNotification('Configuración de horario de invierno actualizada en Supabase.');
+    showNotification(`Horario actualizado: ${newInvierno ? 'Horario de Invierno activado' : 'Horario Regular restablecido'}.`);
+  };
+
+  const handleCambiarTemporadaInstitucional = async (nuevaTemp: TemporadaInstitucional) => {
+    setIsChangingTemporada(true);
+    try {
+      await setTemporadaInstitucional(nuevaTemp);
+      setTemporadaInstitucionalState(nuevaTemp);
+      await fetchHorarios();
+      showNotification(`Temporada institucional actualizada a: ${nuevaTemp === 'invierno' ? 'Horario de Invierno' : 'Horario Regular / Verano'}.`);
+    } catch (e: any) {
+      showNotification('Error al cambiar temporada institucional: ' + (e.message || 'Desconocido'));
+    } finally {
+      setIsChangingTemporada(false);
+    }
   };
 
   /* ================= PROGRAMAS CRUD ================= */
@@ -1966,6 +1997,63 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       {/* HORARIOS ADMIN */}
       {activeAdminSubTab === 'horarios' && (
         <div className="space-y-4">
+          {/* Institutional Season Control Banner */}
+          <div className="p-5 bg-gradient-to-r from-slate-900 via-[#17324D] to-slate-900 rounded-3xl text-white shadow-md space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <span className="text-[10px] font-bold tracking-wider uppercase text-emerald-400 block">
+                  Temporada Institucional Activa
+                </span>
+                <h4 className="text-lg font-black mt-0.5 flex items-center gap-2">
+                  {temporadaInstitucional === 'invierno' ? (
+                    <>
+                      <span className="inline-block w-2.5 h-2.5 rounded-full bg-blue-400 animate-pulse"></span>
+                      <span>Horario de Invierno Vigente</span>
+                    </>
+                  ) : (
+                    <>
+                      <span className="inline-block w-2.5 h-2.5 rounded-full bg-emerald-400"></span>
+                      <span>Horario Regular / Verano Vigente</span>
+                    </>
+                  )}
+                </h4>
+                <p className="text-xs text-slate-300 mt-1 max-w-xl">
+                  {temporadaInstitucional === 'invierno'
+                    ? 'Todas las sedes aplican salida anticipada (-30 min) según normativa EPJA. Poroma: 21:30, San Juan: 20:00.'
+                    : 'Todas las sedes aplican su turno regular completo. Poroma: 22:00, San Juan: 20:30.'}
+                </p>
+              </div>
+
+              {/* Season Switch Action Buttons */}
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  onClick={() => handleCambiarTemporadaInstitucional('invierno')}
+                  disabled={isChangingTemporada || temporadaInstitucional === 'invierno'}
+                  className={`h-10 px-4 rounded-xl font-bold text-xs flex items-center gap-1.5 transition-all ${
+                    temporadaInstitucional === 'invierno'
+                      ? 'bg-blue-500 text-white shadow-inner cursor-default opacity-90'
+                      : 'bg-white/10 hover:bg-white/20 text-white border border-white/20'
+                  }`}
+                >
+                  <Clock className="w-3.5 h-3.5" />
+                  <span>Activar Invierno (Institucional)</span>
+                </button>
+                <button
+                  onClick={() => handleCambiarTemporadaInstitucional('verano')}
+                  disabled={isChangingTemporada || temporadaInstitucional === 'verano'}
+                  className={`h-10 px-4 rounded-xl font-bold text-xs flex items-center gap-1.5 transition-all ${
+                    temporadaInstitucional === 'verano'
+                      ? 'bg-emerald-600 text-white shadow-inner cursor-default opacity-90'
+                      : 'bg-white/10 hover:bg-white/20 text-white border border-white/20'
+                  }`}
+                >
+                  <Check className="w-3.5 h-3.5" />
+                  <span>Restablecer Verano (Regular)</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
           <div className="flex items-center justify-between">
             <div>
               <h3 className="font-extrabold text-base text-[#17324D]">Horarios Institucionales</h3>
@@ -2040,21 +2128,21 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                     </div>
                   </div>
 
-                  {h.sede_nombre === 'Sede Poroma' && (
-                    <button
-                      onClick={() => handleToggleInvierno(h.id)}
-                      className={`w-full h-11 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all ${
-                        h.es_invierno
-                          ? 'bg-amber-100 text-amber-950 border border-amber-300'
-                          : 'bg-blue-50 text-blue-900 border border-blue-200 hover:bg-blue-100'
-                      }`}
-                    >
-                      <Clock className="w-4 h-4" />
-                      <span>
-                        {h.es_invierno ? 'Desactivar Horario de Invierno (Volver a 22:00)' : 'Activar Horario de Invierno (Salida 21:30)'}
-                      </span>
-                    </button>
-                  )}
+                  <button
+                    onClick={() => handleToggleInvierno(h.id)}
+                    className={`w-full h-11 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all ${
+                      h.es_invierno
+                        ? 'bg-amber-100 text-amber-950 border border-amber-300 hover:bg-amber-200'
+                        : 'bg-blue-50 text-blue-900 border border-blue-200 hover:bg-blue-100'
+                    }`}
+                  >
+                    <Clock className="w-4 h-4" />
+                    <span>
+                      {h.es_invierno
+                        ? `Desactivar Horario de Invierno (Restablecer salida regular ${ajustarHoraSalida(h.hora_salida, 30)})`
+                        : `Activar Horario de Invierno (Salida anticipada ${ajustarHoraSalida(h.hora_salida, -30)})`}
+                    </span>
+                  </button>
                 </div>
               ))}
             </div>

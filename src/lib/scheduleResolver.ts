@@ -3,14 +3,178 @@ import { supabase, isSupabaseConfigured } from './supabase';
 import { INITIAL_HORARIOS, INITIAL_SEDES } from './mockData';
 import { loadAsignacionesForDocente } from './teacherAssignments';
 
+export type TemporadaInstitucional = 'invierno' | 'verano';
+
 export interface SedeHorarioResuelto {
   sede: Sede | null;
   horario: Horario | null;
   fuente: 'asignacion_activa' | 'perfil' | 'ninguna';
+  temporada: TemporadaInstitucional;
+}
+
+const TEMPORADA_STORAGE_KEY = 'cea_temporada_institucional_activa_v1';
+
+/**
+ * Ajusta una hora en formato HH:mm sumando o restando minutos (ej: '22:00', -30 -> '21:30')
+ */
+export function ajustarHoraSalida(hora: string, deltaMinutos: number): string {
+  if (!hora || !hora.includes(':')) return hora;
+  const [hhStr, mmStr] = hora.split(':');
+  let totalMin = parseInt(hhStr, 10) * 60 + parseInt(mmStr, 10) + deltaMinutos;
+  if (totalMin < 0) totalMin += 24 * 60;
+  totalMin = totalMin % (24 * 60);
+  const hh = Math.floor(totalMin / 60);
+  const mm = totalMin % 60;
+  return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+}
+
+/**
+ * Determina la temporada institucional activa (Invierno o Verano/Habitual).
+ * 
+ * Regla:
+ * 1. Consulta la tabla public.horarios en Supabase para verificar si hay horarios activos con es_invierno === true.
+ * 2. Si no hay conexión o no está configurado Supabase, consulta localStorage (TEMPORADA_STORAGE_KEY) o mock data.
+ */
+export async function determinarTemporadaInstitucional(): Promise<TemporadaInstitucional> {
+  try {
+    // 1. Verificar en Supabase
+    if (isSupabaseConfigured && supabase) {
+      const { data, error } = await supabase
+        .from('horarios')
+        .select('id, es_invierno, activo')
+        .eq('activo', true);
+
+      if (!error && data && data.length > 0) {
+        const tieneInviernoActivo = data.some((h: any) => h.es_invierno === true);
+        const temp: TemporadaInstitucional = tieneInviernoActivo ? 'invierno' : 'verano';
+        try {
+          localStorage.setItem(TEMPORADA_STORAGE_KEY, temp);
+        } catch {
+          // ignore
+        }
+        return temp;
+      }
+    }
+  } catch (e) {
+    console.warn('Error al verificar temporada institucional en Supabase:', e);
+  }
+
+  // 2. Fallback localStorage
+  try {
+    const local = localStorage.getItem(TEMPORADA_STORAGE_KEY);
+    if (local === 'invierno' || local === 'verano') {
+      return local;
+    }
+  } catch {
+    // ignore
+  }
+
+  // 3. Fallback mock data
+  const tieneInviernoMock = INITIAL_HORARIOS.some(h => h.activo && h.es_invierno);
+  return tieneInviernoMock ? 'invierno' : 'verano';
+}
+
+/**
+ * Permite cambiar la temporada institucional activa y sincronizarla
+ */
+export async function setTemporadaInstitucional(nuevaTemporada: TemporadaInstitucional): Promise<boolean> {
+  try {
+    localStorage.setItem(TEMPORADA_STORAGE_KEY, nuevaTemporada);
+    window.dispatchEvent(new CustomEvent('temporadaInstitucionalChanged', { detail: { temporada: nuevaTemporada } }));
+
+    if (isSupabaseConfigured && supabase) {
+      const esInv = nuevaTemporada === 'invierno';
+      // Obtener todos los horarios activos
+      const { data: horariosList } = await supabase
+        .from('horarios')
+        .select('*')
+        .eq('activo', true);
+
+      if (horariosList && horariosList.length > 0) {
+        for (const h of horariosList) {
+          if (h.es_invierno !== esInv) {
+            const delta = esInv ? -30 : 30;
+            const newSalida = ajustarHoraSalida(h.hora_salida, delta);
+            const cleanName = h.nombre.replace(/ - Horario de Invierno| - Habitual \(Noche\)/g, '').trim();
+            const newNombre = esInv ? `${cleanName} - Horario de Invierno` : `${cleanName} - Habitual (Noche)`;
+
+            await supabase
+              .from('horarios')
+              .update({
+                es_invierno: esInv,
+                hora_salida: newSalida,
+                nombre: newNombre,
+                updated_at: new Date().toISOString()
+              })
+              .eq('id', h.id);
+          }
+        }
+      }
+    }
+    return true;
+  } catch (e) {
+    console.error('Error al actualizar temporada institucional:', e);
+    return false;
+  }
+}
+
+/**
+ * Resuelve el horario adecuado para una sede respetando la temporada activa.
+ */
+function seleccionarHorarioParaTemporada(
+  horariosSede: Horario[],
+  temporada: TemporadaInstitucional,
+  docenteHorarioId?: string
+): Horario | null {
+  if (!horariosSede || horariosSede.length === 0) return null;
+
+  const esInvierno = temporada === 'invierno';
+
+  // 1. Si existe un horario que coincide con la temporada deseada
+  const exactMatch = horariosSede.find(h => Boolean(h.es_invierno) === esInvierno);
+  if (exactMatch) {
+    return exactMatch;
+  }
+
+  // 2. Si el docente tiene un horario_id asignado y está en la lista
+  if (docenteHorarioId) {
+    const docH = horariosSede.find(h => h.id === docenteHorarioId);
+    if (docH) {
+      // Si el horario asignado al docente ya concuerda con la temporada
+      if (Boolean(docH.es_invierno) === esInvierno) {
+        return docH;
+      }
+      // Adaptar el horario asignado a la temporada activa
+      const delta = esInvierno ? -30 : 30;
+      const cleanName = docH.nombre.replace(/ - Horario de Invierno| - Habitual \(Noche\)/g, '').trim();
+      return {
+        ...docH,
+        hora_salida: ajustarHoraSalida(docH.hora_salida, delta),
+        es_invierno: esInvierno,
+        nombre: esInvierno ? `${cleanName} - Horario de Invierno` : `${cleanName} - Habitual (Noche)`
+      };
+    }
+  }
+
+  // 3. Si solo hay un horario base de otra temporada, adaptarlo dinámicamente
+  const baseHorario = horariosSede[0];
+  const delta = esInvierno ? -30 : 30;
+  const cleanName = baseHorario.nombre.replace(/ - Horario de Invierno| - Habitual \(Noche\)/g, '').trim();
+  return {
+    ...baseHorario,
+    hora_salida: ajustarHoraSalida(baseHorario.hora_salida, delta),
+    es_invierno: esInvierno,
+    nombre: esInvierno ? `${cleanName} - Horario de Invierno` : `${cleanName} - Habitual (Noche)`
+  };
 }
 
 /**
  * Resuelve la Sede y Horario de trabajo oficial de un docente siguiendo la regla estricta:
+ * 
+ * Regla:
+ * 1. Primero determinar la temporada institucional activa (Invierno o Verano).
+ * 2. Luego obtener horario correspondiente de la sede/docente acorde a esa temporada.
+ * 3. Mostrar el horario vigente.
  * 
  * Prioridad 1:
  *   asignaciones_docentes (activas) -> grupo_id -> grupos.sede_id -> sedes -> horarios (para esa sede_id)
@@ -20,14 +184,19 @@ export interface SedeHorarioResuelto {
  *   perfiles.sede_id -> sedes
  *   perfiles.horario_id -> horarios
  * 
- * Regla:
+ * Regla de No-Hardcoding:
  *   NUNCA usar valores por defecto/hardcodeados como "Sede Poroma", 18:30 o 22:00.
  *   Si no existe sede u horario, retorna null para mostrar "Sin horario asignado. Consulte con Dirección".
  */
 export async function resolverSedeYHorarioDocente(docente: Perfil): Promise<SedeHorarioResuelto> {
   try {
     // -------------------------------------------------------------------------
-    // PRIORIDAD 1: Buscar en asignaciones_docentes activas
+    // PASO 1: Determinar temporada institucional activa
+    // -------------------------------------------------------------------------
+    const temporadaActiva = await determinarTemporadaInstitucional();
+
+    // -------------------------------------------------------------------------
+    // PASO 2: PRIORIDAD 1 - Buscar en asignaciones_docentes activas
     // -------------------------------------------------------------------------
     const asignaciones = await loadAsignacionesForDocente(docente.id);
     const activas = asignaciones.filter(a => a.activo !== false && a.estado !== 'inactivo');
@@ -59,7 +228,7 @@ export async function resolverSedeYHorarioDocente(docente: Perfil): Promise<Sede
         }
       }
 
-      // Si tenemos resolvedSedeId, cargar la sede y su horario
+      // Si tenemos resolvedSedeId, cargar la sede y su horario correspondiente a la temporada
       if (resolvedSedeId) {
         // Cargar Sede si no la tenemos aún
         if (!resolvedSede) {
@@ -80,61 +249,42 @@ export async function resolverSedeYHorarioDocente(docente: Perfil): Promise<Sede
           }
         }
 
-        // Cargar Horario asociado a la sede (o al perfil si pertenece a la misma sede)
+        // Cargar Horarios de la sede desde Supabase o mock
+        let horariosSede: Horario[] = [];
         if (isSupabaseConfigured && supabase) {
           try {
-            // Intentar primero con el horario específico del docente si coincide con la sede
-            if (docente.horario_id) {
-              const { data: hData } = await supabase
-                .from('horarios')
-                .select('*')
-                .eq('id', docente.horario_id)
-                .eq('sede_id', resolvedSedeId)
-                .eq('activo', true)
-                .maybeSingle();
-              if (hData) resolvedHorario = hData as Horario;
-            }
-
-            // Si no, buscar el primer horario activo de esa sede
-            if (!resolvedHorario) {
-              const { data: hList } = await supabase
-                .from('horarios')
-                .select('*')
-                .eq('sede_id', resolvedSedeId)
-                .eq('activo', true)
-                .order('es_invierno', { ascending: true }) // preferir habitual
-                .limit(1);
-              if (hList && hList.length > 0) {
-                resolvedHorario = hList[0] as Horario;
-              }
+            const { data: hList } = await supabase
+              .from('horarios')
+              .select('*')
+              .eq('sede_id', resolvedSedeId)
+              .eq('activo', true);
+            if (hList && hList.length > 0) {
+              horariosSede = hList as Horario[];
             }
           } catch (e) {
-            console.warn('Error cargando horario desde Supabase:', e);
+            console.warn('Error cargando horarios de sede desde Supabase:', e);
           }
         }
 
-        // Fallback local mock para horario
-        if (!resolvedHorario) {
-          if (docente.horario_id) {
-            resolvedHorario = INITIAL_HORARIOS.find(h => h.id === docente.horario_id && h.sede_id === resolvedSedeId && h.activo) || null;
-          }
-          if (!resolvedHorario) {
-            resolvedHorario = INITIAL_HORARIOS.find(h => h.sede_id === resolvedSedeId && h.activo) || null;
-          }
+        if (horariosSede.length === 0) {
+          horariosSede = INITIAL_HORARIOS.filter(h => h.sede_id === resolvedSedeId && h.activo);
         }
+
+        resolvedHorario = seleccionarHorarioParaTemporada(horariosSede, temporadaActiva, docente.horario_id);
 
         if (resolvedSede || resolvedHorario) {
           return {
             sede: resolvedSede,
             horario: resolvedHorario,
-            fuente: 'asignacion_activa'
+            fuente: 'asignacion_activa',
+            temporada: temporadaActiva
           };
         }
       }
     }
 
     // -------------------------------------------------------------------------
-    // PRIORIDAD 2: Perfil del Docente (perfiles.sede_id y perfiles.horario_id)
+    // PASO 3: PRIORIDAD 2 - Perfil del Docente (perfiles.sede_id y perfiles.horario_id)
     // -------------------------------------------------------------------------
     let perfilSede: Sede | null = null;
     let perfilHorario: Horario | null = null;
@@ -156,11 +306,36 @@ export async function resolverSedeYHorarioDocente(docente: Perfil): Promise<Sede
         perfilSede = INITIAL_SEDES.find(s => s.id === docente.sede_id) || null;
       }
     } else if (docente.sede_nombre) {
-      // Buscar por nombre exacto si no vino el ID
+      // Buscar por nombre si no vino el ID
       perfilSede = INITIAL_SEDES.find(s => s.nombre.toLowerCase().includes(docente.sede_nombre!.toLowerCase())) || null;
     }
 
-    if (docente.horario_id) {
+    const targetSedeId = perfilSede?.id || docente.sede_id;
+
+    if (targetSedeId) {
+      let horariosSede: Horario[] = [];
+      if (isSupabaseConfigured && supabase) {
+        try {
+          const { data: hList } = await supabase
+            .from('horarios')
+            .select('*')
+            .eq('sede_id', targetSedeId)
+            .eq('activo', true);
+          if (hList && hList.length > 0) {
+            horariosSede = hList as Horario[];
+          }
+        } catch (e) {
+          console.warn('Error buscando horarios para sede del perfil:', e);
+        }
+      }
+
+      if (horariosSede.length === 0) {
+        horariosSede = INITIAL_HORARIOS.filter(h => h.sede_id === targetSedeId && h.activo);
+      }
+
+      perfilHorario = seleccionarHorarioParaTemporada(horariosSede, temporadaActiva, docente.horario_id);
+    } else if (docente.horario_id) {
+      // Si solo tiene horario_id sin sede explícita
       if (isSupabaseConfigured && supabase) {
         try {
           const { data: hData } = await supabase
@@ -168,33 +343,18 @@ export async function resolverSedeYHorarioDocente(docente: Perfil): Promise<Sede
             .select('*')
             .eq('id', docente.horario_id)
             .maybeSingle();
-          if (hData) perfilHorario = hData as Horario;
-        } catch (e) {
-          console.warn('Error cargando horario del perfil desde Supabase:', e);
-        }
-      }
-      if (!perfilHorario) {
-        perfilHorario = INITIAL_HORARIOS.find(h => h.id === docente.horario_id) || null;
-      }
-    } else if (perfilSede) {
-      // Si tiene sede pero no horario_id, buscar horario de esa sede
-      if (isSupabaseConfigured && supabase) {
-        try {
-          const { data: hList } = await supabase
-            .from('horarios')
-            .select('*')
-            .eq('sede_id', perfilSede.id)
-            .eq('activo', true)
-            .limit(1);
-          if (hList && hList.length > 0) {
-            perfilHorario = hList[0] as Horario;
+          if (hData) {
+            perfilHorario = seleccionarHorarioParaTemporada([hData as Horario], temporadaActiva, docente.horario_id);
           }
         } catch (e) {
-          console.warn('Error buscando horario de sede perfil:', e);
+          console.warn('Error cargando horario del perfil:', e);
         }
       }
       if (!perfilHorario) {
-        perfilHorario = INITIAL_HORARIOS.find(h => h.sede_id === perfilSede!.id && h.activo) || null;
+        const mockH = INITIAL_HORARIOS.find(h => h.id === docente.horario_id);
+        if (mockH) {
+          perfilHorario = seleccionarHorarioParaTemporada([mockH], temporadaActiva, docente.horario_id);
+        }
       }
     }
 
@@ -202,7 +362,8 @@ export async function resolverSedeYHorarioDocente(docente: Perfil): Promise<Sede
       return {
         sede: perfilSede,
         horario: perfilHorario,
-        fuente: 'perfil'
+        fuente: 'perfil',
+        temporada: temporadaActiva
       };
     }
 
@@ -212,14 +373,16 @@ export async function resolverSedeYHorarioDocente(docente: Perfil): Promise<Sede
     return {
       sede: null,
       horario: null,
-      fuente: 'ninguna'
+      fuente: 'ninguna',
+      temporada: temporadaActiva
     };
   } catch (error) {
     console.error('Error al resolver sede y horario del docente:', error);
     return {
       sede: null,
       horario: null,
-      fuente: 'ninguna'
+      fuente: 'ninguna',
+      temporada: 'verano'
     };
   }
 }
@@ -240,3 +403,4 @@ export function calcularInicioAtraso(toleranciaHasta?: string): string {
   }
   return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
 }
+
