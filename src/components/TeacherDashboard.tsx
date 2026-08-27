@@ -17,9 +17,11 @@ import {
   Check,
   PenTool,
   Camera,
-  ShieldCheck
+  ShieldCheck,
+  Layers,
+  HelpCircle
 } from 'lucide-react';
-import { Perfil, AsistenciaDocente, FilaActividadPedagogica, ControlDocumental } from '../types';
+import { Perfil, AsistenciaDocente, FilaActividadPedagogica, ControlDocumental, Sede, Horario } from '../types';
 import { supabase } from '../lib/supabase';
 import { saveOfflineDocenteAsistencia } from '../lib/db';
 import { MOCK_ASISTENCIAS_DOCENTES } from '../lib/mockData';
@@ -28,6 +30,7 @@ import { ClockInVerificationModal } from './ClockInVerificationModal';
 import { ControlDocumentalCard } from './ControlDocumentalCard';
 import { EditControlDocumentalModal } from './EditControlDocumentalModal';
 import { getControlDocumentalForDocente } from '../lib/controlDocumental';
+import { resolverSedeYHorarioDocente, calcularInicioAtraso, SedeHorarioResuelto } from '../lib/scheduleResolver';
 
 interface TeacherDashboardProps {
   user: Perfil;
@@ -79,11 +82,19 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
   const [showShiftSummaryModal, setShowShiftSummaryModal] = useState<boolean>(false);
   const [showClockInVerificationModal, setShowClockInVerificationModal] = useState<boolean>(false);
 
+  // Sede & Horario asignado real resuelto
+  const [resolvedData, setResolvedData] = useState<SedeHorarioResuelto>({
+    sede: null,
+    horario: null,
+    fuente: 'ninguna'
+  });
+  const [loadingSchedule, setLoadingSchedule] = useState<boolean>(true);
+
   // Form modal state for Control Diario
   const todayStr = getBoliviaTodayDate();
   const [showControlDiarioModal, setShowControlDiarioModal] = useState<boolean>(false);
   const [formFecha, setFormFecha] = useState<string>(todayStr);
-  const [formHoraEntrada, setFormHoraEntrada] = useState<string>('18:30');
+  const [formHoraEntrada, setFormHoraEntrada] = useState<string>('');
   const [firmaEntrada, setFirmaEntrada] = useState<boolean>(true);
 
   // Multigrade activity rows state
@@ -110,14 +121,28 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
     day: 'numeric'
   });
 
-  // Load existing attendance record and control documental
+  // Load existing attendance record, control documental, and resolved schedule/sede
   useEffect(() => {
     async function loadInitialData() {
       // 1. Control Documental
       const docControl = await getControlDocumentalForDocente(user.id);
       setControlDoc(docControl);
 
-      // 2. Attendance
+      // 2. Sede y Horario Dinámico Real (Prioridad 1: Asignaciones -> Prioridad 2: Perfil -> Nunca Poroma hardcodeado)
+      try {
+        setLoadingSchedule(true);
+        const resolved = await resolverSedeYHorarioDocente(user);
+        setResolvedData(resolved);
+        if (resolved.horario?.hora_ingreso) {
+          setFormHoraEntrada(resolved.horario.hora_ingreso);
+        }
+      } catch (err) {
+        console.warn('Error resolviendo horario/sede del docente:', err);
+      } finally {
+        setLoadingSchedule(false);
+      }
+
+      // 3. Attendance
       let foundRec: AsistenciaDocente | null = null;
       if (supabase && isOnline) {
         const { data, error } = await supabase
@@ -421,7 +446,7 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
             <h2 className="text-2xl font-extrabold capitalize leading-tight">{user.nombre_completo}</h2>
             <p className="text-xs text-emerald-200 mt-1 flex items-center gap-1.5 font-medium">
               <MapPin className="w-3.5 h-3.5 text-[#FFC845]" />
-              <span>{user.sede_nombre || 'Sede Poroma'}</span> • <span>RDA: {user.rda || '204958'}</span>
+              <span>{resolvedData.sede?.nombre || user.sede_nombre || 'Sin Sede Asignada'}</span> • <span>RDA: {user.rda || 'N/D'}</span>
             </p>
           </div>
           <div className="bg-white/10 p-2 rounded-2xl border border-white/20 text-center min-w-[64px]">
@@ -610,29 +635,64 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
 
       {/* Assigned Schedule Info Card */}
       <div className="bg-white rounded-3xl p-5 shadow-sm border border-slate-200 space-y-3">
-        <h3 className="font-extrabold text-base text-[#17324D] flex items-center gap-2">
-          <Calendar className="w-5 h-5 text-[#11B8AE]" />
-          <span>Horario Asignado – {user.sede_nombre || 'Sede Poroma'}</span>
-        </h3>
-
-        <div className="bg-emerald-50/70 p-4 rounded-2xl border border-emerald-200 space-y-2 text-sm text-emerald-950 font-medium">
-          <div className="flex justify-between items-center">
-            <span>Hora de Ingreso:</span>
-            <strong className="text-base text-[#00A651]">18:30</strong>
-          </div>
-          <div className="flex justify-between items-center text-xs">
-            <span>Tolerancia de ingreso:</span>
-            <span className="font-bold text-emerald-800">Hasta 18:40 (Puntual)</span>
-          </div>
-          <div className="flex justify-between items-center text-xs">
-            <span>Atraso contabilizado desde:</span>
-            <span className="font-bold text-red-600">18:41 en adelante</span>
-          </div>
-          <div className="flex justify-between items-center pt-2 border-t border-emerald-200">
-            <span>Salida Habitual:</span>
-            <strong className="text-base text-[#17324D]">22:00</strong>
-          </div>
+        <div className="flex items-center justify-between">
+          <h3 className="font-extrabold text-base text-[#17324D] flex items-center gap-2">
+            <Calendar className="w-5 h-5 text-[#11B8AE]" />
+            <span>
+              Horario Asignado – {resolvedData.sede?.nombre || user.sede_nombre || 'Sin Sede'}
+            </span>
+          </h3>
+          {resolvedData.horario?.nombre && (
+            <span className="px-2.5 py-0.5 bg-emerald-100 text-emerald-900 border border-emerald-200 rounded-full text-[11px] font-bold">
+              {resolvedData.horario.nombre}
+            </span>
+          )}
         </div>
+
+        {loadingSchedule ? (
+          <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 text-center text-xs text-slate-500 font-medium animate-pulse">
+            Consultando horario asignado institucional...
+          </div>
+        ) : resolvedData.horario ? (
+          <div className="bg-emerald-50/70 p-4 rounded-2xl border border-emerald-200 space-y-2 text-sm text-emerald-950 font-medium">
+            <div className="flex justify-between items-center">
+              <span>Hora de Ingreso:</span>
+              <strong className="text-base text-[#00A651]">
+                {resolvedData.horario.hora_ingreso || '--:--'}
+              </strong>
+            </div>
+            <div className="flex justify-between items-center text-xs">
+              <span>Tolerancia de ingreso:</span>
+              <span className="font-bold text-emerald-800">
+                Hasta {resolvedData.horario.tolerancia_hasta || resolvedData.horario.hora_ingreso} (Puntual)
+              </span>
+            </div>
+            <div className="flex justify-between items-center text-xs">
+              <span>Atraso contabilizado desde:</span>
+              <span className="font-bold text-red-600">
+                {calcularInicioAtraso(resolvedData.horario.tolerancia_hasta)} en adelante
+              </span>
+            </div>
+            <div className="flex justify-between items-center pt-2 border-t border-emerald-200">
+              <span>Salida Habitual:</span>
+              <strong className="text-base text-[#17324D]">
+                {resolvedData.horario.hora_salida || '--:--'}
+              </strong>
+            </div>
+          </div>
+        ) : (
+          <div className="p-4 bg-amber-50 rounded-2xl border border-amber-200 flex items-start gap-2.5 text-amber-900">
+            <AlertCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+            <div>
+              <p className="text-xs font-bold text-amber-950">
+                Sin horario asignado. Consulte con Dirección
+              </p>
+              <p className="text-[11px] text-amber-800 mt-0.5">
+                No se encontró un horario curricular activo registrado para su sede o perfil.
+              </p>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Quick Access Grid */}

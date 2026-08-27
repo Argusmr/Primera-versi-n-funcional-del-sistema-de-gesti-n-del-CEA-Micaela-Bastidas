@@ -17,6 +17,7 @@ import { SelfieCameraModal } from './SelfieCameraModal';
 import { supabase } from '../lib/supabase';
 import { saveOfflineDocenteAsistencia } from '../lib/db';
 import { INITIAL_SEDES } from '../lib/mockData';
+import { resolverSedeYHorarioDocente } from '../lib/scheduleResolver';
 
 interface ClockInVerificationModalProps {
   user: Perfil;
@@ -53,9 +54,18 @@ export const ClockInVerificationModal: React.FC<ClockInVerificationModalProps> =
       setLoadingGps(true);
       setErrorMessage(null);
 
-      // 1. Fetch Sede info directly from public.sedes in Supabase
-      let foundSede: Sede | undefined;
-      if (supabase && isOnline) {
+      // 1. Fetch Sede info dynamically following priority rules (Asignación -> Perfil)
+      let foundSede: Sede | null = null;
+      try {
+        const resolved = await resolverSedeYHorarioDocente(user);
+        if (resolved.sede) {
+          foundSede = resolved.sede;
+        }
+      } catch (err) {
+        console.warn('Error resolviendo sede para marcación GPS:', err);
+      }
+
+      if (!foundSede && supabase && isOnline) {
         if (user.sede_id) {
           const { data } = await supabase.from('sedes').select('*').eq('id', user.sede_id).maybeSingle();
           if (data) foundSede = data as Sede;
@@ -65,59 +75,53 @@ export const ClockInVerificationModal: React.FC<ClockInVerificationModalProps> =
           const { data } = await supabase.from('sedes').select('*').ilike('nombre', `%${user.sede_nombre.trim()}%`).limit(1);
           if (data && data.length > 0) foundSede = data[0] as Sede;
         }
-
-        if (!foundSede) {
-          const { data } = await supabase.from('sedes').select('*').eq('activo', true).order('nombre').limit(1);
-          if (data && data.length > 0) foundSede = data[0] as Sede;
-        }
       }
 
       if (!foundSede) {
-        foundSede = INITIAL_SEDES.find((s) => s.id === user.sede_id || s.nombre === user.sede_nombre) || {
-          id: user.sede_id || 'sede-1',
-          nombre: user.sede_nombre || 'Sede Poroma',
-          direccion: 'Centro Poblado de Poroma',
-          latitud: -18.539416,
-          longitud: -65.426389,
-          radio_m: 180,
-          activo: true
-        };
+        foundSede = INITIAL_SEDES.find((s) => s.id === user.sede_id || (user.sede_nombre && s.nombre.toLowerCase().includes(user.sede_nombre.toLowerCase()))) || null;
       }
 
-      // Ensure valid numbers for latitud, longitud, and radio_m
-      const lat = foundSede.latitud !== null && foundSede.latitud !== undefined ? Number(foundSede.latitud) : -18.539416;
-      const lon = foundSede.longitud !== null && foundSede.longitud !== undefined ? Number(foundSede.longitud) : -65.426389;
-      const rad = foundSede.radio_m !== null && foundSede.radio_m !== undefined ? Number(foundSede.radio_m) : 180;
+      if (foundSede) {
+        // Ensure valid numbers for latitud, longitud, and radio_m
+        const lat = foundSede.latitud !== null && foundSede.latitud !== undefined ? Number(foundSede.latitud) : 0;
+        const lon = foundSede.longitud !== null && foundSede.longitud !== undefined ? Number(foundSede.longitud) : 0;
+        const rad = foundSede.radio_m !== null && foundSede.radio_m !== undefined ? Number(foundSede.radio_m) : 180;
 
-      foundSede = {
-        ...foundSede,
-        latitud: lat,
-        longitud: lon,
-        radio_m: rad
-      };
+        foundSede = {
+          ...foundSede,
+          latitud: lat,
+          longitud: lon,
+          radio_m: rad
+        };
 
-      setSedeInfo(foundSede);
+        setSedeInfo(foundSede);
+      } else {
+        setSedeInfo(null);
+      }
 
       // 2. Obtain Current Geolocation
       const location = await getCurrentGPSPosition();
       setGpsData(location);
 
-      if (location.error || location.latitud === 0) {
+      if (location.error || location.latitud === 0 || !foundSede) {
         setEstadoGps('sin_gps');
         setDistanceMeters(null);
       } else {
+        const targetLat = foundSede.latitud || 0;
+        const targetLon = foundSede.longitud || 0;
+        const targetRadius = foundSede.radio_m || 180;
+
         const dist = calculateDistanceMeters(
           location.latitud,
           location.longitud,
-          lat,
-          lon
+          targetLat,
+          targetLon
         );
         setDistanceMeters(dist);
 
-        const allowedRadius = rad;
         if (location.precision > 50) {
           setEstadoGps('gps_impreciso');
-        } else if (dist <= allowedRadius) {
+        } else if (dist <= targetRadius) {
           setEstadoGps('dentro_rango');
         } else {
           setEstadoGps('fuera_rango');
@@ -133,24 +137,23 @@ export const ClockInVerificationModal: React.FC<ClockInVerificationModalProps> =
   const handleRefreshGps = async () => {
     setLoadingGps(true);
 
-    // Re-verify Sede coordinates from public.sedes if needed
+    // Re-verify Sede coordinates dynamically if needed
     let activeSede = sedeInfo;
-    if (supabase && isOnline) {
-      if (user.sede_id) {
-        const { data } = await supabase.from('sedes').select('*').eq('id', user.sede_id).maybeSingle();
-        if (data) activeSede = data as Sede;
-      }
-      if (!activeSede && user.sede_nombre) {
-        const { data } = await supabase.from('sedes').select('*').ilike('nombre', `%${user.sede_nombre.trim()}%`).limit(1);
-        if (data && data.length > 0) activeSede = data[0] as Sede;
+    if (!activeSede) {
+      try {
+        const resolved = await resolverSedeYHorarioDocente(user);
+        if (resolved.sede) {
+          activeSede = resolved.sede;
+        }
+      } catch (err) {
+        console.warn('Error resolviendo sede en refresco GPS:', err);
       }
     }
 
-    const lat = activeSede?.latitud !== null && activeSede?.latitud !== undefined ? Number(activeSede.latitud) : -18.539416;
-    const lon = activeSede?.longitud !== null && activeSede?.longitud !== undefined ? Number(activeSede.longitud) : -65.426389;
-    const rad = activeSede?.radio_m !== null && activeSede?.radio_m !== undefined ? Number(activeSede.radio_m) : 180;
-
     if (activeSede) {
+      const lat = activeSede.latitud !== null && activeSede.latitud !== undefined ? Number(activeSede.latitud) : 0;
+      const lon = activeSede.longitud !== null && activeSede.longitud !== undefined ? Number(activeSede.longitud) : 0;
+      const rad = activeSede.radio_m !== null && activeSede.radio_m !== undefined ? Number(activeSede.radio_m) : 180;
       activeSede = { ...activeSede, latitud: lat, longitud: lon, radio_m: rad };
       setSedeInfo(activeSede);
     }
@@ -158,19 +161,19 @@ export const ClockInVerificationModal: React.FC<ClockInVerificationModalProps> =
     const location = await getCurrentGPSPosition();
     setGpsData(location);
 
-    if (location.error || location.latitud === 0) {
+    if (location.error || location.latitud === 0 || !activeSede) {
       setEstadoGps('sin_gps');
       setDistanceMeters(null);
     } else {
       const dist = calculateDistanceMeters(
         location.latitud,
         location.longitud,
-        lat,
-        lon
+        activeSede.latitud || 0,
+        activeSede.longitud || 0
       );
       setDistanceMeters(dist);
 
-      const allowedRadius = rad;
+      const allowedRadius = activeSede.radio_m || 180;
       if (location.precision > 50) {
         setEstadoGps('gps_impreciso');
       } else if (dist <= allowedRadius) {
@@ -179,6 +182,7 @@ export const ClockInVerificationModal: React.FC<ClockInVerificationModalProps> =
         setEstadoGps('fuera_rango');
       }
     }
+
     setLoadingGps(false);
   };
 
