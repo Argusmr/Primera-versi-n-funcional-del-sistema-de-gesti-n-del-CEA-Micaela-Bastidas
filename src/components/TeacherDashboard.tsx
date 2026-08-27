@@ -21,7 +21,7 @@ import {
   Layers,
   HelpCircle
 } from 'lucide-react';
-import { Perfil, AsistenciaDocente, FilaActividadPedagogica, ControlDocumental, Sede, Horario } from '../types';
+import { Perfil, AsistenciaDocente, FilaActividadPedagogica, ControlDocumental, Sede, Horario, NivelEducativo } from '../types';
 import { supabase } from '../lib/supabase';
 import { saveOfflineDocenteAsistencia } from '../lib/db';
 import { MOCK_ASISTENCIAS_DOCENTES } from '../lib/mockData';
@@ -31,6 +31,7 @@ import { ControlDocumentalCard } from './ControlDocumentalCard';
 import { EditControlDocumentalModal } from './EditControlDocumentalModal';
 import { getControlDocumentalForDocente } from '../lib/controlDocumental';
 import { resolverSedeYHorarioDocente, calcularInicioAtraso, SedeHorarioResuelto } from '../lib/scheduleResolver';
+import { loadNivelesFromSupabase } from '../lib/academic';
 
 interface TeacherDashboardProps {
   user: Perfil;
@@ -40,13 +41,14 @@ interface TeacherDashboardProps {
   onRefreshSync: () => void;
 }
 
-const SUBNIVELES_POR_AREA: Record<string, string[]> = {
+// Fallback normativo estricto EPJA solo si Supabase no responde
+const FALLBACK_SUBNIVELES_POR_AREA: Record<string, string[]> = {
   EPA: [
     'Aprendizajes Elementales',
-    'Aprendizajes Avanzados',
-    'Aprendizajes Aplicados'
+    'Aprendizajes Avanzados'
   ],
   ESA: [
+    'Aprendizajes Aplicados',
     'Aprendizajes Complementarios',
     'Aprendizajes Especializados'
   ],
@@ -90,6 +92,39 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
   });
   const [loadingSchedule, setLoadingSchedule] = useState<boolean>(true);
 
+  // Niveles educativos cargados dinámicamente desde public.niveles (orden ASC)
+  const [nivelesEducativos, setNivelesEducativos] = useState<NivelEducativo[]>([]);
+
+  // Función para obtener subniveles dinámicos por área (EPA, ESA, ETA) respetando orden ASC
+  const getSubnivelesForArea = (area: string): string[] => {
+    const areaUpper = (area || '').toUpperCase();
+    
+    // Filtrar desde niveles cargados de Supabase
+    if (nivelesEducativos.length > 0) {
+      const filtrados = nivelesEducativos.filter(n => {
+        const subprog = (n.subprograma_codigo || '').toUpperCase();
+        const prog = (n.programa_codigo || '').toUpperCase();
+        return subprog === areaUpper || (areaUpper === 'ETA' && prog === 'ETA');
+      });
+
+      // Extraer nombres únicos preservando el orden ASC
+      const uniqueNames: string[] = [];
+      filtrados.forEach(n => {
+        const name = (n.etapa_nombre || n.nombre || '').trim();
+        if (name && !uniqueNames.includes(name)) {
+          uniqueNames.push(name);
+        }
+      });
+
+      if (uniqueNames.length > 0) {
+        return uniqueNames;
+      }
+    }
+
+    // Fallback normativo estricto si no hay datos de Supabase
+    return FALLBACK_SUBNIVELES_POR_AREA[areaUpper] || [];
+  };
+
   // Form modal state for Control Diario
   const todayStr = getBoliviaTodayDate();
   const [showControlDiarioModal, setShowControlDiarioModal] = useState<boolean>(false);
@@ -128,7 +163,17 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
       const docControl = await getControlDocumentalForDocente(user.id);
       setControlDoc(docControl);
 
-      // 2. Sede y Horario Dinámico Real (Prioridad 1: Asignaciones -> Prioridad 2: Perfil -> Nunca Poroma hardcodeado)
+      // 2. Cargar Niveles Educativos desde Supabase (public.niveles orden ASC)
+      try {
+        const nivelesList = await loadNivelesFromSupabase();
+        if (nivelesList && nivelesList.length > 0) {
+          setNivelesEducativos(nivelesList);
+        }
+      } catch (err) {
+        console.warn('Error cargando niveles educativos:', err);
+      }
+
+      // 3. Sede y Horario Dinámico Real (Prioridad 1: Asignaciones -> Prioridad 2: Perfil -> Nunca Poroma hardcodeado)
       try {
         setLoadingSchedule(true);
         const resolved = await resolverSedeYHorarioDocente(user);
@@ -344,10 +389,11 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
 
   // Multigrade Rows Handlers
   const handleAddMultigradoRow = () => {
+    const defaultSub = getSubnivelesForArea('EPA')[0] || 'Aprendizajes Elementales';
     const newRow: FilaActividadPedagogica = {
       id: `row-${Date.now()}`,
       area_nivel: 'EPA',
-      subnivel: SUBNIVELES_POR_AREA['EPA'][0],
+      subnivel: defaultSub,
       actividad_pedagogica: ''
     };
     setMultigradoRows([...multigradoRows, newRow]);
@@ -361,7 +407,7 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
   const handleAreaChange = (id: string, newArea: string) => {
     setMultigradoRows(multigradoRows.map(r => {
       if (r.id !== id) return r;
-      const defaultSub = SUBNIVELES_POR_AREA[newArea]?.[0] || '';
+      const defaultSub = getSubnivelesForArea(newArea)[0] || '';
       return {
         ...r,
         area_nivel: newArea,
@@ -922,7 +968,7 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
                               onChange={(e) => handleRowFieldChange(row.id, 'subnivel', e.target.value)}
                               className="w-full h-11 px-3 bg-white rounded-xl border border-slate-300 font-bold text-slate-800 outline-none"
                             >
-                              {(SUBNIVELES_POR_AREA[row.area_nivel] || []).map((sub) => (
+                              {getSubnivelesForArea(row.area_nivel).map((sub) => (
                                 <option key={sub} value={sub}>
                                   {sub}
                                 </option>
