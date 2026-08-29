@@ -18,6 +18,7 @@ import { Perfil, AlertaEstudiante, Seguimiento, AccionSeguimiento } from '../typ
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { saveOfflineSeguimiento } from '../lib/db';
 import { downloadAtRiskReport } from '../lib/excelExport';
+import { getBoliviaTodayDate } from '../lib/geo';
 
 interface FollowUpViewProps {
   user: Perfil;
@@ -160,7 +161,7 @@ export const FollowUpView: React.FC<FollowUpViewProps> = ({ user, isOnline }) =>
 
     setSubmitting(true);
     const syncKey = `seg-${selectedAlerta.id}-${Date.now()}`;
-    const today = new Date().toISOString().slice(0, 10);
+    const today = getBoliviaTodayDate();
 
     const newSegPayload = {
       alerta_id: selectedAlerta.id,

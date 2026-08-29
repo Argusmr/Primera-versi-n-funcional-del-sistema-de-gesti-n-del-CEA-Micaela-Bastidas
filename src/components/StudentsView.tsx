@@ -28,6 +28,7 @@ import { saveOfflineEstudianteAsistencia } from '../lib/db';
 import { downloadStudentEnrollmentReport } from '../lib/excelExport';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { registrarAuditoria } from '../lib/audit';
+import { getBoliviaTodayDate, formatAcademicDate } from '../lib/geo';
 import { OfficialAttendanceSheets } from './OfficialAttendanceSheets';
 
 interface StudentsViewProps {
@@ -74,7 +75,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
   const [gruposError, setGruposError] = useState<string | null>(null);
 
   const [selectedGrupoId, setSelectedGrupoId] = useState<string>('');
-  const [fechaClase, setFechaClase] = useState<string>(new Date().toISOString().slice(0, 10));
+  const [fechaClase, setFechaClase] = useState<string>(getBoliviaTodayDate());
   const [materiaClase, setMateriaClase] = useState<string>('');
 
   // Attendance Students State (real from Supabase)
@@ -261,7 +262,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
         codigo_interno: st.codigo_interno || `EST-${st.id.slice(0, 6)}`,
         nombre_completo: st.nombre_completo,
         documento: st.documento || undefined,
-        fecha_inscripcion: st.fecha_inscripcion || new Date().toISOString().slice(0, 10),
+        fecha_inscripcion: st.fecha_inscripcion || getBoliviaTodayDate(),
         programa_id: st.programa_id,
         sede_id: st.sede_id,
         carrera_especialidad: st.carrera_especialidad,
@@ -371,7 +372,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
         codigo_interno: st.codigo_interno || `EST-${st.id.slice(0, 6)}`,
         nombre_completo: st.nombre_completo,
         documento: st.documento || undefined,
-        fecha_inscripcion: st.fecha_inscripcion || new Date().toISOString().slice(0, 10),
+        fecha_inscripcion: st.fecha_inscripcion || getBoliviaTodayDate(),
         programa_id: st.programa_id,
         sede_id: st.sede_id,
         carrera_especialidad: st.carrera_especialidad,
@@ -1515,7 +1516,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
                       </span>
                       <h4 className="font-extrabold text-base text-[#17324D] mt-1">{s.nombre_completo}</h4>
                       <p className="text-xs text-slate-500 font-medium">
-                        CI: {s.documento || 'N/D'} • Inscrito: {s.fecha_inscripcion}
+                        CI: {s.documento || 'N/D'} • Inscrito: {formatAcademicDate(s.fecha_inscripcion)}
                       </p>
                     </div>
                     <span
@@ -1619,7 +1620,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
                               {s.grupo_nombre}
                             </span>
                             <span className="text-[10px] font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">
-                              {s.fecha}
+                              {formatAcademicDate(s.fecha)}
                             </span>
                           </div>
                           <h4 className="font-extrabold text-base text-[#17324D] mt-1">{s.materia}</h4>
@@ -1761,7 +1762,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
               </div>
               <div className="flex justify-between">
                 <span className="text-slate-500">Fecha de la clase:</span>
-                <strong className="text-slate-900">{fechaClase}</strong>
+                <strong className="text-slate-900">{formatAcademicDate(fechaClase)} ({fechaClase})</strong>
               </div>
               <div className="pt-2 border-t border-slate-200 grid grid-cols-4 gap-1 text-center font-bold text-[11px]">
                 <div className="text-emerald-700 bg-emerald-50 py-1 rounded-lg">

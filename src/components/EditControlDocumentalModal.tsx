@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { FileCheck, X, CheckCircle2, AlertTriangle, Save, Calendar, FileText } from 'lucide-react';
 import { ControlDocumental, FormatoPlanModular, Perfil } from '../types';
 import { saveControlDocumental, calculateEstadoControl } from '../lib/controlDocumental';
+import { getBoliviaTodayDate } from '../lib/geo';
 
 interface EditControlDocumentalModalProps {
   docente: Perfil;
@@ -28,7 +29,7 @@ export const EditControlDocumentalModal: React.FC<EditControlDocumentalModalProp
     currentControl?.tiene_planificacion_curricular ?? false
   );
   const [fechaRevision, setFechaRevision] = useState<string>(
-    currentControl?.fecha_revision || new Date().toISOString().slice(0, 10)
+    currentControl?.fecha_revision || getBoliviaTodayDate()
   );
   const [observacion, setObservacion] = useState<string>(
     currentControl?.observacion || ''

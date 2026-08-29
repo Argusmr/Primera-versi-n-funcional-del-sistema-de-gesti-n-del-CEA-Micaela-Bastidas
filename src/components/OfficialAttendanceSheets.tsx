@@ -31,7 +31,7 @@ import {
 } from '../types';
 import { getLocalDatosInstitucionales } from '../lib/institutional';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
-import { getBoliviaTodayDate } from '../lib/geo';
+import { getBoliviaTodayDate, formatAcademicDate } from '../lib/geo';
 import {
   downloadMonthlyAttendanceSheetExcel,
   downloadDailyAttendanceReportExcel
@@ -297,7 +297,7 @@ export const OfficialAttendanceSheets: React.FC<OfficialAttendanceSheetsProps> =
   const monthTitleFormatted = useMemo(() => {
     try {
       const [y, m] = selectedMonth.split('-');
-      const d = new Date(Number(y), Number(m) - 1, 1);
+      const d = new Date(Number(y), Number(m) - 1, 15);
       return d.toLocaleDateString('es-BO', { month: 'long', year: 'numeric' }).toUpperCase();
     } catch {
       return selectedMonth;
@@ -730,7 +730,7 @@ export const OfficialAttendanceSheets: React.FC<OfficialAttendanceSheetsProps> =
             <span className="text-xs font-black text-[#17324D] uppercase tracking-wider">
               {sheetType === 'mensual'
                 ? `Vista Previa: Planilla Mensual (${monthTitleFormatted})`
-                : `Vista Previa: Reporte Diario (${selectedDate})`}
+                : `Vista Previa: Reporte Diario (${formatAcademicDate(selectedDate)})`}
             </span>
             <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 font-extrabold text-[10px] rounded-md">
               {grupoNombreDisplay}
@@ -943,7 +943,7 @@ export const OfficialAttendanceSheets: React.FC<OfficialAttendanceSheetsProps> =
         {/* Metadata Grid */}
         <div className="grid grid-cols-3 gap-2 text-[11px] border border-slate-400 p-2.5 rounded-lg mb-3 bg-slate-50">
           <div>
-            <strong>Gestión / Periodo:</strong> {sheetType === 'mensual' ? monthTitleFormatted : selectedDate}
+            <strong>Gestión / Periodo:</strong> {sheetType === 'mensual' ? monthTitleFormatted : formatAcademicDate(selectedDate)}
           </div>
           <div>
             <strong>Grupo / Curso:</strong> {grupoNombreDisplay}

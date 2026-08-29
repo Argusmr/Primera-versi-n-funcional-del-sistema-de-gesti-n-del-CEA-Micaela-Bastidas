@@ -384,8 +384,8 @@ export const DirectorDashboard: React.FC<DirectorDashboardProps> = ({
   const monthLabel = useMemo(() => {
     try {
       const [y, m] = currentMonthKey.split('-');
-      const d = new Date(Number(y), Number(m) - 1, 1);
-      return d.toLocaleDateString('es-BO', { month: 'long', year: 'numeric' });
+      const d = new Date(Number(y), Number(m) - 1, 15);
+      return d.toLocaleDateString('es-BO', { timeZone: 'America/La_Paz', month: 'long', year: 'numeric' });
     } catch {
       return currentMonthKey;
     }

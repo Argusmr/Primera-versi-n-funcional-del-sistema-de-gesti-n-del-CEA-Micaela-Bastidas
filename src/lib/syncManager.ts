@@ -7,6 +7,7 @@ import {
   removeOfflineSeguimiento
 } from './db';
 import { supabase, checkIsOnline } from './supabase';
+import { getBoliviaTodayDate } from './geo';
 
 export interface SyncStatus {
   isOnline: boolean;
@@ -185,7 +186,7 @@ export async function processSyncQueue(): Promise<{ success: boolean; syncedCoun
         const { error } = await supabase.from('seguimientos').insert({
           estudiante_id: item.estudiante_id,
           docente_id: item.docente_id,
-          fecha: new Date().toISOString().slice(0, 10),
+          fecha: getBoliviaTodayDate(),
           motivo: item.motivo,
           accion_realizada: item.accion_realizada,
           resultado: item.resultado,

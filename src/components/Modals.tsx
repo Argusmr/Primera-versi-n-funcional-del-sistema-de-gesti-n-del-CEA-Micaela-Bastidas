@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { X, UserCheck, Users, Upload, FilePlus, CheckCircle2, AlertCircle, Layers, CheckSquare, Square } from 'lucide-react';
 import { Perfil, Sede, Horario, Programa, CategoriaPublicacion, Grupo } from '../types';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { getBoliviaTodayDate } from '../lib/geo';
 
 // 1. ADD TEACHER MODAL
 interface AddTeacherModalProps {
@@ -846,7 +847,7 @@ export const PublishModal: React.FC<{
           nombre_archivo: nombreArchivo,
           tipo_archivo: tipoArchivo,
           autor_id: user?.id || null,
-          fecha: new Date().toISOString().slice(0, 10),
+          fecha: getBoliviaTodayDate(),
           archivado: false
         });
 

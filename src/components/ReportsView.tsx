@@ -58,7 +58,7 @@ import {
   getDiasTrabajadosForMonth,
   getLocalConfiguracionesCalendario
 } from '../lib/calendar';
-import { getBoliviaTodayDate } from '../lib/geo';
+import { getBoliviaTodayDate, formatAcademicDate } from '../lib/geo';
 
 interface ReportsViewProps {
   user: Perfil;
@@ -1149,7 +1149,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ user }) => {
                         <div>
                           <div className="flex items-center gap-2 flex-wrap">
                             <span className="px-2.5 py-0.5 bg-slate-100 text-slate-700 font-bold text-[11px] rounded-lg border border-slate-200">
-                              {ses.fecha}
+                              {formatAcademicDate(ses.fecha)}
                             </span>
                             <span className="px-2.5 py-0.5 bg-emerald-50 text-[#00A651] font-bold text-[11px] rounded-lg border border-emerald-200">
                               {ses.grupo_nombre}

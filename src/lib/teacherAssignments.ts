@@ -1,6 +1,7 @@
 import { AsignacionDocente, Grupo, Perfil } from '../types';
 import { supabase, isSupabaseConfigured } from './supabase';
 import { registrarAuditoria } from './audit';
+import { getBoliviaTodayDate } from './geo';
 import { INITIAL_GRUPOS, MOCK_DOCENTES } from './mockData';
 
 const STORAGE_KEY = 'cea_asignaciones_docentes_oficiales_v2';
@@ -422,7 +423,7 @@ export async function createAcademicAssignment(
     id: newId,
     estado: 'activo',
     activo: true,
-    fecha_inicio: asigData.fecha_inicio || new Date().toISOString().slice(0, 10),
+    fecha_inicio: asigData.fecha_inicio || getBoliviaTodayDate(),
     gestion: asigData.gestion || 2026,
     created_at: new Date().toISOString()
   };

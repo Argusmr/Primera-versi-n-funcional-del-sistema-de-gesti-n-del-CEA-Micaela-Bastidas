@@ -232,7 +232,7 @@ export function downloadStudentStatisticalReport(
   XLSX.utils.book_append_sheet(wb, wsDetalle, 'Lista de Estudiantes');
 
   // Download XLSX
-  const fechaHoy = new Date().toISOString().slice(0, 10);
+  const fechaHoy = getBoliviaTodayDate();
   XLSX.writeFile(wb, `Reporte_Estadistico_Estudiantes_${fechaHoy}.xlsx`);
 }
 

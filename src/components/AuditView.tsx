@@ -499,10 +499,10 @@ export const AuditView: React.FC<AuditViewProps> = ({ user }) => {
                   <div className="flex items-center gap-2 self-start sm:self-auto">
                     <div className="text-right text-[11px] text-slate-500 font-medium">
                       <span className="font-bold text-slate-700 block">
-                        {aud.created_at ? new Date(aud.created_at).toLocaleDateString('es-BO', { year: 'numeric', month: 'short', day: '2-digit' }) : ''}
+                        {aud.created_at ? new Date(aud.created_at).toLocaleDateString('es-BO', { timeZone: 'America/La_Paz', year: 'numeric', month: 'short', day: '2-digit' }) : ''}
                       </span>
                       <span className="text-[10px] text-slate-400">
-                        {aud.created_at ? new Date(aud.created_at).toLocaleTimeString('es-BO', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : ''}
+                        {aud.created_at ? new Date(aud.created_at).toLocaleTimeString('es-BO', { timeZone: 'America/La_Paz', hour: '2-digit', minute: '2-digit', second: '2-digit' }) : ''}
                       </span>
                     </div>
 

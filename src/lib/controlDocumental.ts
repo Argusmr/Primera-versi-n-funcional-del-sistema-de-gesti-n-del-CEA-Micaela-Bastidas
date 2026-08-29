@@ -1,5 +1,6 @@
 import { ControlDocumental, FormatoPlanModular } from '../types';
 import { supabase } from './supabase';
+import { getBoliviaTodayDate } from './geo';
 
 const STORAGE_KEY = 'cea_control_documental_v1';
 
@@ -112,7 +113,7 @@ export async function getControlDocumentalForDocente(docenteId: string): Promise
     tiene_plan_modular: false,
     formato_plan_modular: 'Digital',
     tiene_planificacion_curricular: false,
-    fecha_revision: new Date().toISOString().slice(0, 10),
+    fecha_revision: getBoliviaTodayDate(),
     observacion: 'Sin revisión registrada aún.',
     estado: 'pendiente'
   };
@@ -152,7 +153,7 @@ export async function saveControlDocumental(
           tiene_plan_modular: updatedRecord.tiene_plan_modular,
           formato_plan_modular: updatedRecord.formato_plan_modular,
           tiene_planificacion_curricular: updatedRecord.tiene_planificacion_curricular,
-          fecha_revision: updatedRecord.fecha_revision || new Date().toISOString().slice(0, 10),
+          fecha_revision: updatedRecord.fecha_revision || getBoliviaTodayDate(),
           observacion: updatedRecord.observacion || '',
           updated_at: updatedRecord.updated_at,
           updated_by: updatedByUserId

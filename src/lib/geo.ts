@@ -12,6 +12,54 @@ export function getBoliviaTodayDate(date: Date = new Date()): string {
   }).format(date);
 }
 
+/**
+ * Formatea una fecha académica (YYYY-MM-DD) al formato oficial boliviano (DD/MM/YYYY)
+ * sin riesgo de desplazamiento por zona horaria UTC.
+ */
+export function formatAcademicDate(fecha: string | null | undefined): string {
+  if (!fecha) return '';
+  const trimmed = fecha.trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    const [year, month, day] = trimmed.split('-');
+    return `${day}/${month}/${year}`;
+  }
+  // Si contiene hora o timestamp, convertir respetando estrictamente America/La_Paz
+  try {
+    const d = new Date(trimmed);
+    if (!isNaN(d.getTime())) {
+      return new Intl.DateTimeFormat('es-BO', {
+        timeZone: 'America/La_Paz',
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric'
+      }).format(d);
+    }
+  } catch {
+    // fallback
+  }
+  return trimmed;
+}
+
+/**
+ * Formatea una fecha académica (YYYY-MM-DD) con el día de la semana en español para Bolivia
+ * Ej: "Viernes, 28/08/2026"
+ */
+export function formatAcademicDateWithDay(fecha: string | null | undefined): string {
+  if (!fecha) return '';
+  const trimmed = fecha.trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    const [year, month, day] = trimmed.split('-');
+    const d = new Date(Number(year), Number(month) - 1, Number(day), 12, 0, 0);
+    const dayName = new Intl.DateTimeFormat('es-BO', {
+      timeZone: 'America/La_Paz',
+      weekday: 'long'
+    }).format(d);
+    const capitalized = dayName.charAt(0).toUpperCase() + dayName.slice(1);
+    return `${capitalized}, ${day}/${month}/${year}`;
+  }
+  return formatAcademicDate(fecha);
+}
+
 // Haversine formula to compute distance in meters between two lat/lon coordinates
 export function calculateDistanceMeters(
   lat1: number,

@@ -38,6 +38,7 @@ import {
   INITIAL_ETAPAS,
   INITIAL_NIVELES
 } from '../lib/academic';
+import { getBoliviaTodayDate } from '../lib/geo';
 import { INITIAL_SEDES, INITIAL_CARRERAS, INITIAL_GRUPOS } from '../lib/mockData';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 
@@ -71,7 +72,7 @@ export const TeacherAssignmentsModal: React.FC<TeacherAssignmentsModalProps> = (
   const [deactivatingAsignacion, setDeactivatingAsignacion] = useState<AsignacionDocente | null>(null);
 
   // Deactivation modal state
-  const [fechaFinDeact, setFechaFinDeact] = useState<string>(new Date().toISOString().slice(0, 10));
+  const [fechaFinDeact, setFechaFinDeact] = useState<string>(getBoliviaTodayDate());
   const [motivoPreset, setMotivoPreset] = useState<string>('Reasignación de carga horaria');
   const [motivoCustom, setMotivoCustom] = useState<string>('');
   const [isProcessingDeact, setIsProcessingDeact] = useState<boolean>(false);
@@ -871,7 +872,7 @@ export const TeacherAssignmentsModal: React.FC<TeacherAssignmentsModalProps> = (
                           type="button"
                           onClick={() => {
                             setDeactivatingAsignacion(asig);
-                            setFechaFinDeact(new Date().toISOString().slice(0, 10));
+                            setFechaFinDeact(getBoliviaTodayDate());
                             setMotivoPreset('Reasignación de carga horaria');
                             setMotivoCustom('');
                           }}
