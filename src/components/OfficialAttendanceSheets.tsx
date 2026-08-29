@@ -27,7 +27,8 @@ import {
   Grupo,
   SesionClase,
   AsistenciaEstudiante,
-  DatosInstitucionales
+  DatosInstitucionales,
+  ConfiguracionCalendario
 } from '../types';
 import { getLocalDatosInstitucionales } from '../lib/institutional';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
@@ -36,6 +37,15 @@ import {
   downloadMonthlyAttendanceSheetExcel,
   downloadDailyAttendanceReportExcel
 } from '../lib/excelExport';
+import {
+  loadConfiguracionesCalendario,
+  loadDiasNoLaborales,
+  loadPeriodosAcademicos,
+  getDiasLaboralesOficialesMes,
+  DiaCalendarioOficial,
+  DiaNoLaboral,
+  PeriodoAcademico
+} from '../lib/calendar';
 
 interface OfficialAttendanceSheetsProps {
   user: Perfil;
@@ -78,6 +88,11 @@ export const OfficialAttendanceSheets: React.FC<OfficialAttendanceSheetsProps> =
   const [sesionesMensuales, setSesionesMensuales] = useState<Array<{ id: string; fecha: string; materia: string; docente_id?: string }>>([]);
   const [asistenciasMap, setAsistenciasMap] = useState<Record<string, Record<string, 'presente' | 'atraso' | 'falta' | 'licencia'>>>({});
   
+  // Institutional Calendar states
+  const [configsCalendario, setConfigsCalendario] = useState<ConfiguracionCalendario[]>([]);
+  const [diasNoLaborales, setDiasNoLaborales] = useState<DiaNoLaboral[]>([]);
+  const [periodosAcademicos, setPeriodosAcademicos] = useState<PeriodoAcademico[]>([]);
+
   // Daily specific session
   const [dailySesion, setDailySesion] = useState<SesionClase | null>(null);
   const [dailyAsistencias, setDailyAsistencias] = useState<Array<{ estudiante_id: string; estado: 'presente' | 'atraso' | 'falta' | 'licencia'; observacion?: string }>>([]);
@@ -91,6 +106,43 @@ export const OfficialAttendanceSheets: React.FC<OfficialAttendanceSheetsProps> =
       setSelectedGrupoId(assignedGroups[0].id);
     }
   }, [assignedGroups, selectedGrupoId]);
+
+  // Load calendar configs, holidays, and academic periods
+  useEffect(() => {
+    async function loadCalendarBase() {
+      try {
+        const [configs, noLaborales, periodos] = await Promise.all([
+          loadConfiguracionesCalendario(),
+          loadDiasNoLaborales(),
+          loadPeriodosAcademicos()
+        ]);
+        setConfigsCalendario(configs);
+        setDiasNoLaborales(noLaborales);
+        setPeriodosAcademicos(periodos);
+      } catch (e) {
+        console.warn('Error al cargar base de calendario institucional:', e);
+      }
+    }
+    loadCalendarBase();
+  }, []);
+
+  // Compute official institutional working days for the selected month
+  const diasLaborales = useMemo(() => {
+    return getDiasLaboralesOficialesMes(selectedMonth, {
+      configuraciones: configsCalendario,
+      diasNoLaborales,
+      periodos: periodosAcademicos
+    });
+  }, [selectedMonth, configsCalendario, diasNoLaborales, periodosAcademicos]);
+
+  // Map recorded sessions by date string
+  const sesionPorFechaMap = useMemo(() => {
+    const map: Record<string, { id: string; fecha: string; materia: string; docente_id?: string }> = {};
+    sesionesMensuales.forEach(s => {
+      map[s.fecha] = s;
+    });
+    return map;
+  }, [sesionesMensuales]);
 
   // Load complete data from Supabase for the selected group & time frame
   const loadSheetData = useCallback(async () => {
@@ -304,7 +356,7 @@ export const OfficialAttendanceSheets: React.FC<OfficialAttendanceSheetsProps> =
     }
   }, [selectedMonth]);
 
-  // Calculation of Student Totals for Monthly Matrix
+  // Calculation of Student Totals for Monthly Matrix based on Official Working Days
   const monthlyStats = useMemo(() => {
     let totalPres = 0;
     let totalAtr = 0;
@@ -317,12 +369,15 @@ export const OfficialAttendanceSheets: React.FC<OfficialAttendanceSheetsProps> =
       let f = 0;
       let l = 0;
 
-      sesionesMensuales.forEach(s => {
-        const estado = asistenciasMap[s.id]?.[st.id];
-        if (estado === 'presente') p++;
-        else if (estado === 'atraso') a++;
-        else if (estado === 'falta') f++;
-        else if (estado === 'licencia') l++;
+      diasLaborales.forEach(dia => {
+        const ses = sesionPorFechaMap[dia.fecha];
+        if (ses) {
+          const estado = asistenciasMap[ses.id]?.[st.id];
+          if (estado === 'presente') p++;
+          else if (estado === 'atraso') a++;
+          else if (estado === 'falta') f++;
+          else if (estado === 'licencia') l++;
+        }
       });
 
       const totalSes = p + a + f + l;
@@ -358,9 +413,10 @@ export const OfficialAttendanceSheets: React.FC<OfficialAttendanceSheetsProps> =
       totalFalt,
       totalLic,
       totalSesionesCount: sesionesMensuales.length,
+      totalDiasLaborales: diasLaborales.length,
       generalAsistenciaPct
     };
-  }, [estudiantes, sesionesMensuales, asistenciasMap]);
+  }, [estudiantes, diasLaborales, sesionPorFechaMap, asistenciasMap, sesionesMensuales.length]);
 
   // Daily statistics calculation
   const dailyStats = useMemo(() => {
@@ -416,6 +472,7 @@ export const OfficialAttendanceSheets: React.FC<OfficialAttendanceSheetsProps> =
         docenteNombre: docenteDisplay,
         mesAno: selectedMonth,
         estudiantes,
+        diasLaborales,
         sesiones: sesionesMensuales,
         asistenciasPorSesionYEstudiante: asistenciasMap
       });
@@ -654,9 +711,9 @@ export const OfficialAttendanceSheets: React.FC<OfficialAttendanceSheetsProps> =
           </div>
 
           <div className="p-3 bg-white rounded-2xl border border-slate-200 shadow-xs">
-            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Sesiones Mes</span>
-            <strong className="text-xl font-black text-blue-700">{sesionesMensuales.length}</strong>
-            <span className="text-[10px] text-blue-500 block font-medium">días de clase</span>
+            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Días Hábiles Mes</span>
+            <strong className="text-xl font-black text-blue-700">{diasLaborales.length}</strong>
+            <span className="text-[10px] text-slate-400 block font-medium">{sesionesMensuales.length} clases reg.</span>
           </div>
 
           <div className="p-3 bg-emerald-50 rounded-2xl border border-emerald-200">
@@ -763,31 +820,35 @@ export const OfficialAttendanceSheets: React.FC<OfficialAttendanceSheetsProps> =
                   <th className="py-2.5 px-3 border-r border-slate-200 whitespace-nowrap">Código</th>
                   <th className="py-2.5 px-3 border-r border-slate-200 min-w-[200px]">Nombres y Apellidos</th>
 
-                  {/* Day session columns */}
-                  {sesionesMensuales.map(s => {
-                    const dayNum = s.fecha.slice(8, 10);
+                  {/* Official institutional working day columns */}
+                  {diasLaborales.map(dia => {
+                    const ses = sesionPorFechaMap[dia.fecha];
+                    const isRegistered = Boolean(ses);
                     return (
                       <th
-                        key={s.id}
-                        className="py-2.5 px-1.5 text-center border-r border-slate-200 min-w-[34px] bg-slate-50"
-                        title={`${s.fecha} - ${s.materia || 'Clase'}`}
+                        key={dia.fecha}
+                        className={`py-2.5 px-1.5 text-center border-r border-slate-200 min-w-[34px] ${
+                          isRegistered ? 'bg-emerald-50/50' : 'bg-slate-50'
+                        }`}
+                        title={`${dia.diaSemanaCompleto} ${dia.fecha}${ses ? ` • Clase: ${ses.materia || 'Registrada'}` : ' • Día hábil oficial'}`}
                       >
-                        <span className="block font-black text-slate-800">{dayNum}</span>
+                        <span className="block font-black text-slate-800">{dia.diaNumero}</span>
+                        <span className="block text-[8px] font-bold text-slate-400 -mt-0.5">{dia.diaSemana}</span>
                       </th>
                     );
                   })}
 
-                  {sesionesMensuales.length === 0 && (
+                  {diasLaborales.length === 0 && (
                     <th className="py-2.5 px-3 text-center text-slate-400 border-r border-slate-200 italic">
-                      Sin sesiones registradas en este mes
+                      Sin días laborales oficiales en este mes
                     </th>
                   )}
 
-                  <th className="py-2.5 px-2 text-center bg-emerald-50 text-emerald-900 border-r border-slate-200">P</th>
-                  <th className="py-2.5 px-2 text-center bg-amber-50 text-amber-900 border-r border-slate-200">A</th>
-                  <th className="py-2.5 px-2 text-center bg-rose-50 text-rose-900 border-r border-slate-200">F</th>
-                  <th className="py-2.5 px-2 text-center bg-blue-50 text-blue-900 border-r border-slate-200">L</th>
-                  <th className="py-2.5 px-2.5 text-center bg-slate-50 text-slate-800 border-r border-slate-200 font-bold">Total</th>
+                  <th className="py-2.5 px-2 text-center bg-emerald-50 text-emerald-900 border-r border-slate-200" title="Presentes">P</th>
+                  <th className="py-2.5 px-2 text-center bg-amber-50 text-amber-900 border-r border-slate-200" title="Atrasos">A</th>
+                  <th className="py-2.5 px-2 text-center bg-rose-50 text-rose-900 border-r border-slate-200" title="Faltas">F</th>
+                  <th className="py-2.5 px-2 text-center bg-blue-50 text-blue-900 border-r border-slate-200" title="Licencias">L</th>
+                  <th className="py-2.5 px-2.5 text-center bg-slate-50 text-slate-800 border-r border-slate-200 font-bold">Total Asist.</th>
                   <th className="py-2.5 px-3 text-center bg-slate-900 text-amber-300 font-extrabold">% Asist</th>
                 </tr>
               </thead>
@@ -804,9 +865,10 @@ export const OfficialAttendanceSheets: React.FC<OfficialAttendanceSheetsProps> =
                       {row.estudiante.nombre_completo}
                     </td>
 
-                    {/* Day Attendance cells */}
-                    {sesionesMensuales.map(s => {
-                      const stState = asistenciasMap[s.id]?.[row.estudiante.id];
+                    {/* Official Day Attendance cells */}
+                    {diasLaborales.map(dia => {
+                      const ses = sesionPorFechaMap[dia.fecha];
+                      const stState = ses ? asistenciasMap[ses.id]?.[row.estudiante.id] : undefined;
                       let cellContent = '-';
                       let cellClass = 'text-slate-300';
 
@@ -826,7 +888,7 @@ export const OfficialAttendanceSheets: React.FC<OfficialAttendanceSheetsProps> =
 
                       return (
                         <td
-                          key={s.id}
+                          key={dia.fecha}
                           className={`py-2 px-1 text-center border-r border-slate-100 text-xs font-mono ${cellClass}`}
                         >
                           {cellContent}
@@ -834,7 +896,7 @@ export const OfficialAttendanceSheets: React.FC<OfficialAttendanceSheetsProps> =
                       );
                     })}
 
-                    {sesionesMensuales.length === 0 && (
+                    {diasLaborales.length === 0 && (
                       <td className="py-2 px-3 text-center text-slate-300 border-r border-slate-100">-</td>
                     )}
 
@@ -851,7 +913,7 @@ export const OfficialAttendanceSheets: React.FC<OfficialAttendanceSheetsProps> =
                       {row.l}
                     </td>
                     <td className="py-2 px-2.5 text-center border-r border-slate-100 font-bold text-slate-800">
-                      {row.totalSes}
+                      {row.p + row.a}
                     </td>
                     <td className="py-2 px-3 text-center font-black text-[#17324D]">
                       {row.pct}%
@@ -970,19 +1032,19 @@ export const OfficialAttendanceSheets: React.FC<OfficialAttendanceSheetsProps> =
                 <th className="p-1 border-r border-black text-center w-6">N°</th>
                 <th className="p-1 border-r border-black w-16">Código</th>
                 <th className="p-1 border-r border-black min-w-[140px]">Nombres y Apellidos</th>
-                {sesionesMensuales.map(s => (
-                  <th key={s.id} className="p-1 border-r border-black text-center w-6">
-                    {s.fecha.slice(8, 10)}
+                {diasLaborales.map(dia => (
+                  <th key={dia.fecha} className="p-1 border-r border-black text-center w-6">
+                    {dia.diaNumero}
                   </th>
                 ))}
-                {sesionesMensuales.length === 0 && (
-                  <th className="p-1 border-r border-black text-center italic">Sin clases registradas</th>
+                {diasLaborales.length === 0 && (
+                  <th className="p-1 border-r border-black text-center italic">Sin días laborales oficiales</th>
                 )}
                 <th className="p-1 border-r border-black text-center w-6">P</th>
                 <th className="p-1 border-r border-black text-center w-6">A</th>
                 <th className="p-1 border-r border-black text-center w-6">F</th>
                 <th className="p-1 border-r border-black text-center w-6">L</th>
-                <th className="p-1 border-r border-black text-center w-8">Total</th>
+                <th className="p-1 border-r border-black text-center w-8">Total Asist.</th>
                 <th className="p-1 text-center w-10">% Asist</th>
               </tr>
             </thead>
@@ -992,23 +1054,24 @@ export const OfficialAttendanceSheets: React.FC<OfficialAttendanceSheetsProps> =
                   <td className="p-1 text-center border-r border-slate-400 font-bold">{row.num}</td>
                   <td className="p-1 border-r border-slate-400 font-mono text-[9px]">{row.estudiante.codigo_interno}</td>
                   <td className="p-1 border-r border-slate-400 font-bold uppercase">{row.estudiante.nombre_completo}</td>
-                  {sesionesMensuales.map(s => {
-                    const st = asistenciasMap[s.id]?.[row.estudiante.id];
+                  {diasLaborales.map(dia => {
+                    const ses = sesionPorFechaMap[dia.fecha];
+                    const st = ses ? asistenciasMap[ses.id]?.[row.estudiante.id] : undefined;
                     const letter = st === 'presente' ? 'P' : st === 'atraso' ? 'A' : st === 'falta' ? 'F' : st === 'licencia' ? 'L' : '-';
                     return (
-                      <td key={s.id} className="p-1 text-center border-r border-slate-400 font-bold">
+                      <td key={dia.fecha} className="p-1 text-center border-r border-slate-400 font-bold">
                         {letter}
                       </td>
                     );
                   })}
-                  {sesionesMensuales.length === 0 && (
+                  {diasLaborales.length === 0 && (
                     <td className="p-1 text-center border-r border-slate-400">-</td>
                   )}
                   <td className="p-1 text-center border-r border-slate-400 font-bold">{row.p}</td>
                   <td className="p-1 text-center border-r border-slate-400 font-bold">{row.a}</td>
                   <td className="p-1 text-center border-r border-slate-400 font-bold">{row.f}</td>
                   <td className="p-1 text-center border-r border-slate-400 font-bold">{row.l}</td>
-                  <td className="p-1 text-center border-r border-slate-400 font-black">{row.totalSes}</td>
+                  <td className="p-1 text-center border-r border-slate-400 font-black">{row.p + row.a}</td>
                   <td className="p-1 text-center font-black">{row.pct}%</td>
                 </tr>
               ))}

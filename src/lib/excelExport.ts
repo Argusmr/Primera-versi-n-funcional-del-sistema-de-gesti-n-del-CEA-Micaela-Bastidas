@@ -276,6 +276,7 @@ export interface MonthlyAttendanceExportData {
   docenteNombre: string;
   mesAno: string; // e.g. 2026-08
   estudiantes: Estudiante[];
+  diasLaborales?: Array<{ fecha: string; diaNumero: string; diaSemana?: string }>;
   sesiones: Array<{ id: string; fecha: string; materia: string }>;
   asistenciasPorSesionYEstudiante: Record<string, Record<string, 'presente' | 'atraso' | 'falta' | 'licencia'>>; // sesionId -> estudianteId -> estado
 }
@@ -289,14 +290,16 @@ export function downloadMonthlyAttendanceSheetExcel(data: MonthlyAttendanceExpor
     a.nombre_completo.localeCompare(b.nombre_completo)
   );
 
-  // Sort sessions by date
-  const sortedSesiones = [...data.sesiones].sort((a, b) => a.fecha.localeCompare(b.fecha));
+  // Use provided official working days or fallback
+  const columnasDias: Array<{ fecha: string; diaNumero: string }> = data.diasLaborales && data.diasLaborales.length > 0
+    ? data.diasLaborales
+    : data.sesiones.map(s => ({ fecha: s.fecha, diaNumero: s.fecha.slice(8, 10) }));
 
   // Determine month title
   let mesTexto = data.mesAno;
   try {
     const [y, m] = data.mesAno.split('-');
-    const d = new Date(Number(y), Number(m) - 1, 1);
+    const d = new Date(Number(y), Number(m) - 1, 15);
     mesTexto = d.toLocaleDateString('es-BO', { month: 'long', year: 'numeric' }).toUpperCase();
   } catch {
     mesTexto = data.mesAno;
@@ -324,17 +327,15 @@ export function downloadMonthlyAttendanceSheetExcel(data: MonthlyAttendanceExpor
   // 2. Table Column Headers
   const headerRow = ['N°', 'CÓDIGO', 'NOMBRES Y APELLIDOS'];
   
-  if (sortedSesiones.length > 0) {
-    sortedSesiones.forEach(s => {
-      const dayNum = s.fecha.slice(8, 10);
-      headerRow.push(`Día ${dayNum}`);
+  if (columnasDias.length > 0) {
+    columnasDias.forEach(d => {
+      headerRow.push(`Día ${d.diaNumero}`);
     });
   } else {
-    // If no registered sessions yet in that month, put generic day columns or notice
-    headerRow.push('Sin sesiones');
+    headerRow.push('Sin días hábiles');
   }
 
-  headerRow.push('TOTAL P', 'TOTAL A', 'TOTAL F', 'TOTAL L', 'TOTAL SESIONES', '% ASIST.');
+  headerRow.push('TOTAL P', 'TOTAL A', 'TOTAL F', 'TOTAL L', 'TOTAL ASISTENCIAS', '% ASIST.');
   rows.push(headerRow);
 
   // 3. Student Data Rows
@@ -342,7 +343,12 @@ export function downloadMonthlyAttendanceSheetExcel(data: MonthlyAttendanceExpor
   let totalAtrGroup = 0;
   let totalFaltGroup = 0;
   let totalLicGroup = 0;
-  let totalSesionesCount = sortedSesiones.length;
+
+  // Build lookup session by date
+  const sesionByDateMap: Record<string, { id: string; fecha: string }> = {};
+  data.sesiones.forEach(s => {
+    sesionByDateMap[s.fecha] = s;
+  });
 
   sortedEstudiantes.forEach((st, idx) => {
     let pCount = 0;
@@ -356,21 +362,26 @@ export function downloadMonthlyAttendanceSheetExcel(data: MonthlyAttendanceExpor
       st.nombre_completo
     ];
 
-    if (sortedSesiones.length > 0) {
-      sortedSesiones.forEach(s => {
-        const estado = data.asistenciasPorSesionYEstudiante[s.id]?.[st.id];
-        if (estado === 'presente') {
-          row.push('P');
-          pCount++;
-        } else if (estado === 'atraso') {
-          row.push('A');
-          aCount++;
-        } else if (estado === 'falta') {
-          row.push('F');
-          fCount++;
-        } else if (estado === 'licencia') {
-          row.push('L');
-          lCount++;
+    if (columnasDias.length > 0) {
+      columnasDias.forEach(dia => {
+        const ses = sesionByDateMap[dia.fecha];
+        if (ses) {
+          const estado = data.asistenciasPorSesionYEstudiante[ses.id]?.[st.id];
+          if (estado === 'presente') {
+            row.push('P');
+            pCount++;
+          } else if (estado === 'atraso') {
+            row.push('A');
+            aCount++;
+          } else if (estado === 'falta') {
+            row.push('F');
+            fCount++;
+          } else if (estado === 'licencia') {
+            row.push('L');
+            lCount++;
+          } else {
+            row.push('-');
+          }
         } else {
           row.push('-');
         }
@@ -379,37 +390,42 @@ export function downloadMonthlyAttendanceSheetExcel(data: MonthlyAttendanceExpor
       row.push('-');
     }
 
-    const totalValid = pCount + aCount + fCount + lCount;
+    const totalEfectivos = pCount + aCount + fCount + lCount;
     const asistidos = pCount + aCount;
-    const pct = totalValid > 0 ? `${Math.round((asistidos / totalValid) * 100)}%` : '0%';
+    const pct = totalEfectivos > 0 ? `${Math.round((asistidos / totalEfectivos) * 100)}%` : '0%';
 
     totalPresGroup += pCount;
     totalAtrGroup += aCount;
     totalFaltGroup += fCount;
     totalLicGroup += lCount;
 
-    row.push(pCount, aCount, fCount, lCount, totalValid, pct);
+    row.push(pCount, aCount, fCount, lCount, asistidos, pct);
     rows.push(row);
   });
 
   // 4. Totales por Día / Sesión
   rows.push([]);
-  const totalesDiasRow = ['', '', 'TOTAL ASISTENCIAS POR SESIÓN (P+A)'];
-  if (sortedSesiones.length > 0) {
-    sortedSesiones.forEach(s => {
-      let dayPresentes = 0;
-      sortedEstudiantes.forEach(st => {
-        const est = data.asistenciasPorSesionYEstudiante[s.id]?.[st.id];
-        if (est === 'presente' || est === 'atraso') {
-          dayPresentes++;
-        }
-      });
-      totalesDiasRow.push(dayPresentes as any);
+  const totalesDiasRow = ['', '', 'TOTAL ASISTENCIAS POR DÍA (P+A)'];
+  if (columnasDias.length > 0) {
+    columnasDias.forEach(dia => {
+      const ses = sesionByDateMap[dia.fecha];
+      if (ses) {
+        let dayPresentes = 0;
+        sortedEstudiantes.forEach(st => {
+          const est = data.asistenciasPorSesionYEstudiante[ses.id]?.[st.id];
+          if (est === 'presente' || est === 'atraso') {
+            dayPresentes++;
+          }
+        });
+        totalesDiasRow.push(dayPresentes as any);
+      } else {
+        totalesDiasRow.push('-' as any);
+      }
     });
   } else {
     totalesDiasRow.push('');
   }
-  totalesDiasRow.push(totalPresGroup as any, totalAtrGroup as any, totalFaltGroup as any, totalLicGroup as any, '', '');
+  totalesDiasRow.push(totalPresGroup as any, totalAtrGroup as any, totalFaltGroup as any, totalLicGroup as any, (totalPresGroup + totalAtrGroup) as any, '');
   rows.push(totalesDiasRow);
 
   // 5. Signature Footer
@@ -428,12 +444,12 @@ export function downloadMonthlyAttendanceSheetExcel(data: MonthlyAttendanceExpor
     { wch: 14 }, // Código
     { wch: 32 }, // Nombre
   ];
-  if (sortedSesiones.length > 0) {
-    sortedSesiones.forEach(() => colWidths.push({ wch: 8 }));
+  if (columnasDias.length > 0) {
+    columnasDias.forEach(() => colWidths.push({ wch: 7 }));
   } else {
     colWidths.push({ wch: 14 });
   }
-  colWidths.push({ wch: 9 }, { wch: 9 }, { wch: 9 }, { wch: 9 }, { wch: 14 }, { wch: 10 });
+  colWidths.push({ wch: 9 }, { wch: 9 }, { wch: 9 }, { wch: 9 }, { wch: 16 }, { wch: 10 });
   ws['!cols'] = colWidths;
 
   XLSX.utils.book_append_sheet(wb, ws, 'Planilla Mensual');
